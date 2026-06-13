@@ -10,6 +10,7 @@ const MAX_R = 110;
 export default function Bubbles({ year, metric }) {
   const svgRef = useRef(null);
   const simRef = useRef(null);
+  const pointerRef = useRef({ x: null, y: null, active: false });
   const [hovered, setHovered] = useState(null);
 
   const nodes = useMemo(() => {
@@ -34,11 +35,35 @@ export default function Bubbles({ year, metric }) {
 
     if (!simRef.current) {
       simRef.current = d3.forceSimulation(merged)
-        .force('x', d3.forceX(WIDTH / 2).strength(0.08))
-        .force('y', d3.forceY(HEIGHT / 2).strength(0.08))
-        .force('collide', d3.forceCollide().radius((d) => d.r + 1.5).iterations(4))
-        .alphaDecay(0.015)
-        .velocityDecay(0.3);
+        .force('x', d3.forceX(WIDTH / 2).strength(0.04))
+        .force('y', d3.forceY(HEIGHT / 2).strength(0.04))
+        .force('collide', d3.forceCollide()
+          .radius((d) => d.r + 1.5)
+          .strength(0.85)
+          .iterations(4))
+        // Pointer pushes nearby bubbles away — the "fidget" feel.
+        .force('pointer', (alpha) => {
+          const p = pointerRef.current;
+          if (!p.active || p.x == null) return;
+          const sim = simRef.current;
+          const ns = sim.nodes();
+          for (const n of ns) {
+            const dx = n.x - p.x;
+            const dy = n.y - p.y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 0.0001;
+            const reach = 90 + n.r;
+            if (dist < reach) {
+              const push = (1 - dist / reach) * 6 * alpha * 30;
+              n.vx += (dx / dist) * push;
+              n.vy += (dy / dist) * push;
+            }
+          }
+        })
+        .alphaDecay(0.01)
+        .velocityDecay(0.14)
+        .alphaMin(0.001);
+      // Keep the sim warm forever so motion feels alive.
+      simRef.current.alphaTarget(0.02);
     } else {
       simRef.current.nodes(merged);
       simRef.current.force('collide').radius((d) => d.r + 1.5);
@@ -87,22 +112,46 @@ export default function Bubbles({ year, metric }) {
 
     const drag = d3.drag()
       .on('start', (event, d) => {
-        if (!event.active) sim.alphaTarget(0.3).restart();
+        sim.alphaTarget(0.35).restart();
         d.fx = d.x; d.fy = d.y;
+        d._lastvx = 0; d._lastvy = 0;
       })
       .on('drag', (event, d) => {
         d.fx = event.x; d.fy = event.y;
+        d._lastvx = event.dx;
+        d._lastvy = event.dy;
       })
       .on('end', (event, d) => {
-        if (!event.active) sim.alphaTarget(0);
         d.fx = null; d.fy = null;
-        sim.alpha(0.5).restart();
+        // Carry momentum so a fast drag flings the bubble.
+        d.vx = (d._lastvx || 0) * 4;
+        d.vy = (d._lastvy || 0) * 4;
+        sim.alphaTarget(0.02);
+        sim.alpha(0.6).restart();
       });
     join.call(drag);
 
     sim.on('tick', () => {
-      join.attr('transform', (d) => `translate(${d.x},${d.y})`);
+      const t = performance.now();
+      join.attr('transform', (d, i) => {
+        // Subtle idle "breathing" + squash when moving fast.
+        const speed = Math.sqrt((d.vx || 0) ** 2 + (d.vy || 0) ** 2);
+        const breath = 1 + 0.018 * Math.sin(t / 650 + i * 0.7);
+        const wobble = Math.min(0.12, speed * 0.01);
+        const s = breath + wobble;
+        return `translate(${d.x},${d.y}) scale(${s})`;
+      });
     });
+
+    // Pointer tracking on the SVG (viewBox coordinates).
+    svg
+      .on('pointermove', (event) => {
+        const [x, y] = d3.pointer(event, svgRef.current);
+        pointerRef.current = { x, y, active: true };
+      })
+      .on('pointerleave', () => {
+        pointerRef.current.active = false;
+      });
   }, [nodes, metric]);
 
   return (
