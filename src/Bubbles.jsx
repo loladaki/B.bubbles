@@ -8,18 +8,21 @@ const PAD = 6;
 const MIN_R = 16;
 const MAX_R = 104;
 const SAMPLES = 44; // outline resolution per bubble
+const INSET = 3;    // subtle uniform gap (thin soap-foam membrane) between bubbles
 
 const closedCurve = d3.line().curve(d3.curveCatmullRomClosed.alpha(0.6));
 
 // Build a soap-bubble outline: a circle flattened against nearby neighbours
 // using the radical (power-diagram) plane, so bubbles share a soft flat edge
-// where they touch and stay round where they're free.
+// where they touch and stay round where they're free. Everything is pulled in
+// by INSET so neighbours never quite meet, leaving a thin even gap.
 function bubbleOutline(node, neighbours) {
+  const rd = node.r - INSET;
   const pts = new Array(SAMPLES);
   for (let a = 0; a < SAMPLES; a++) {
     const th = (a / SAMPLES) * Math.PI * 2;
-    let px = node.x + node.r * Math.cos(th);
-    let py = node.y + node.r * Math.sin(th);
+    let px = node.x + rd * Math.cos(th);
+    let py = node.y + rd * Math.sin(th);
     for (let k = 0; k < neighbours.length; k++) {
       const nb = neighbours[k];
       const dx = nb.x - node.x;
@@ -27,8 +30,8 @@ function bubbleOutline(node, neighbours) {
       const D = Math.sqrt(dx * dx + dy * dy) || 1e-6;
       const nx = dx / D;
       const ny = dy / D;
-      // Distance from this node's centre to the shared contact plane.
-      const t = (D * D + node.r * node.r - nb.r * nb.r) / (2 * D);
+      // Shared contact plane, pulled back by INSET to leave a membrane gap.
+      const t = (D * D + node.r * node.r - nb.r * nb.r) / (2 * D) - INSET;
       const proj = (px - node.x) * nx + (py - node.y) * ny;
       if (proj > t) {
         px -= (proj - t) * nx;
@@ -114,7 +117,9 @@ export default function Bubbles({ year, metric, cursorFidget }) {
         .alphaDecay(0.015)
         .velocityDecay(0.22)
         .alphaMin(0.001);
-      simRef.current.alphaTarget(0.01);
+      // No permanent heat — let the cluster settle at rest, then re-heat only
+      // on interaction (drag / fidget-hover). Calmer, and lets bubbles come
+      // to a satisfying rest.
     } else {
       simRef.current.nodes(merged);
       simRef.current.force('collide').radius((d) => d.r - 5);
@@ -187,7 +192,7 @@ export default function Bubbles({ year, metric, cursorFidget }) {
         d.fx = null; d.fy = null;
         d.vx = (d._lastvx || 0) * 3;
         d.vy = (d._lastvy || 0) * 3;
-        sim.alphaTarget(0.01);
+        sim.alphaTarget(0);     // let it settle back to rest
         sim.alpha(0.5).restart();
       });
     bJoin.call(drag);
@@ -221,9 +226,14 @@ export default function Bubbles({ year, metric, cursorFidget }) {
       .on('pointermove', (event) => {
         const [x, y] = d3.pointer(event, svgRef.current);
         pointerRef.current = { x, y, active: true };
+        // Keep the sim warm while fidget is on so hovering pushes bubbles.
+        if (fidgetRef.current && sim.alpha() < 0.08) {
+          sim.alphaTarget(0.12).restart();
+        }
       })
       .on('pointerleave', () => {
         pointerRef.current.active = false;
+        sim.alphaTarget(0); // settle once the pointer leaves
       });
   }, [nodes, metric]);
 
