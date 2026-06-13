@@ -110,10 +110,10 @@ export default function Bubbles({ year, metric, cursorFidget }) {
 
     if (!simRef.current) {
       simRef.current = d3.forceSimulation(merged)
-        // Weak horizontal pull + stronger vertical pull spreads the cluster
-        // across the full (wide) width instead of clumping in a square.
-        .force('x', d3.forceX(() => dimsRef.current.w / 2).strength(0.012))
-        .force('y', d3.forceY(() => dimsRef.current.h / 2).strength(0.12))
+        // Gentle, balanced pull so bubbles form a full 2D cluster that uses
+        // both width and height (not a flat line) — leaves room for many more.
+        .force('x', d3.forceX(() => dimsRef.current.w / 2).strength(0.015))
+        .force('y', d3.forceY(() => dimsRef.current.h / 2).strength(0.03))
         // Slight overlap -> visible flattening at contacts.
         .force('collide', d3.forceCollide()
           .radius((d) => d.r - 5)
