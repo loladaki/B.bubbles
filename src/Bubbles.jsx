@@ -4,28 +4,9 @@ import { COUNTRIES, CONTINENTS, interpolate } from './data/countries.js';
 
 const WIDTH = 1000;
 const HEIGHT = 700;
-const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
-const WORLD_R = 320;
+const PAD = 8;
 const MIN_R = 14;
-const MAX_R = 92;
-
-const CONTINENT_CENTERS = {
-  'Europe':     { x: 400, y: 140 },
-  'N. America': { x: 230, y: 280 },
-  'Asia':       { x: 700, y: 290 },
-  'S. America': { x: 260, y: 520 },
-  'Africa':     { x: 520, y: 510 },
-  'Oceania':    { x: 730, y: 540 },
-};
-
-const CONTINENT_LABEL_ARCS = [
-  { name: 'EUROPE',        startDeg: -55, endDeg:  -5 },
-  { name: 'ASIA',          startDeg:   5, endDeg:  90 },
-  { name: 'OCEANIA',       startDeg: 100, endDeg: 140 },
-  { name: 'AFRICA',        startDeg: 150, endDeg: 230 },
-  { name: 'SOUTH AMERICA', startDeg: 235, endDeg: 280 },
-  { name: 'NORTH AMERICA', startDeg: 285, endDeg: 350 },
-];
+const MAX_R = 100;
 
 export default function Bubbles({ year, metric, cursorFidget }) {
   const svgRef = useRef(null);
@@ -53,20 +34,17 @@ export default function Bubbles({ year, metric, cursorFidget }) {
     const merged = nodes.map((n) => {
       const prev = existing.find((e) => e.code === n.code);
       if (prev) return { ...prev, ...n };
-      // Seed inside the world disk at a random angle.
-      const angle = Math.random() * Math.PI * 2;
-      const radius = Math.random() * (WORLD_R * 0.6);
       return {
         ...n,
-        x: CENTER.x + Math.cos(angle) * radius,
-        y: CENTER.y + Math.sin(angle) * radius,
+        x: PAD + Math.random() * (WIDTH - 2 * PAD),
+        y: PAD + Math.random() * (HEIGHT - 2 * PAD),
       };
     });
 
     if (!simRef.current) {
       simRef.current = d3.forceSimulation(merged)
-        .force('x', d3.forceX(CENTER.x).strength(0.02))
-        .force('y', d3.forceY(CENTER.y).strength(0.02))
+        .force('x', d3.forceX(WIDTH / 2).strength(0.015))
+        .force('y', d3.forceY(HEIGHT / 2).strength(0.015))
         .force('collide', d3.forceCollide()
           .radius((d) => d.r + 2)
           .strength(0.85)
@@ -88,20 +66,18 @@ export default function Bubbles({ year, metric, cursorFidget }) {
             }
           }
         })
+        // Rectangular bound: keep bubbles inside the canvas.
         .force('bound', () => {
           const ns = simRef.current.nodes();
           for (const n of ns) {
-            const dx = n.x - CENTER.x;
-            const dy = n.y - CENTER.y;
-            const dist = Math.sqrt(dx * dx + dy * dy) || 0.0001;
-            const maxR = WORLD_R - n.r - 4;
-            if (dist > maxR) {
-              const t = maxR / dist;
-              n.x = CENTER.x + dx * t;
-              n.y = CENTER.y + dy * t;
-              n.vx *= -0.4;
-              n.vy *= -0.4;
-            }
+            const minX = PAD + n.r;
+            const maxX = WIDTH - PAD - n.r;
+            const minY = PAD + n.r;
+            const maxY = HEIGHT - PAD - n.r;
+            if (n.x < minX) { n.x = minX; n.vx *= -0.4; }
+            if (n.x > maxX) { n.x = maxX; n.vx *= -0.4; }
+            if (n.y < minY) { n.y = minY; n.vy *= -0.4; }
+            if (n.y > maxY) { n.y = maxY; n.vy *= -0.4; }
           }
         })
         .alphaDecay(0.012)
@@ -116,9 +92,7 @@ export default function Bubbles({ year, metric, cursorFidget }) {
 
     const sim = simRef.current;
 
-    // --- d3 joins ----------------------------------------------------------
-
-    // Per-country clipPath definitions (each holds a path updated per tick).
+    // Per-country clipPaths (each path is updated per tick).
     const clipDefs = svg.select('g.clip-defs');
     const clipJoin = clipDefs.selectAll('clipPath.cell-clip')
       .data(merged, (d) => d.code)
@@ -130,7 +104,7 @@ export default function Bubbles({ year, metric, cursorFidget }) {
         return cp;
       });
 
-    // Country groups: each is a Voronoi cell filled with a flag image.
+    // Country = Voronoi cell filled with flag image.
     const countriesG = svg.select('g.countries');
     const cJoin = countriesG.selectAll('g.country')
       .data(merged, (d) => d.code)
@@ -139,15 +113,12 @@ export default function Bubbles({ year, metric, cursorFidget }) {
           .attr('class', 'country')
           .style('cursor', 'grab');
 
-        // Continent-tinted background fill of the cell.
         g.append('path')
           .attr('class', 'cell-fill')
           .attr('fill', (d) => CONTINENTS[d.continent].color)
           .attr('fill-opacity', 0.45)
           .attr('stroke', 'none');
 
-        // Flag image, clipped to the cell shape so the flag IS the country's
-        // flexible shape (no perfect circles anywhere).
         g.append('image')
           .attr('class', 'flag-img')
           .attr('href', (d) => `https://flagcdn.com/w320/${d.iso2}.png`)
@@ -155,7 +126,6 @@ export default function Bubbles({ year, metric, cursorFidget }) {
           .attr('opacity', 0.78)
           .attr('clip-path', (d) => `url(#cell-clip-${d.code})`);
 
-        // Subtle border drawn on top.
         g.append('path')
           .attr('class', 'cell-border')
           .attr('fill', 'none')
@@ -169,7 +139,6 @@ export default function Bubbles({ year, metric, cursorFidget }) {
     cJoin.on('mouseenter', (_, d) => setHovered(d))
          .on('mouseleave', () => setHovered(null));
 
-    // Labels (country codes) outside the cell so they stay crisp.
     const labelsG = svg.select('g.labels');
     const labelJoin = labelsG.selectAll('text.code-label')
       .data(merged, (d) => d.code)
@@ -191,7 +160,6 @@ export default function Bubbles({ year, metric, cursorFidget }) {
       .attr('font-size', (d) => Math.max(11, Math.min(20, d.r / 2.6)))
       .text((d) => (d.r > 24 ? d.code : ''));
 
-    // Drag with throw momentum.
     const drag = d3.drag()
       .on('start', (event, d) => {
         sim.alphaTarget(0.35).restart();
@@ -212,18 +180,12 @@ export default function Bubbles({ year, metric, cursorFidget }) {
       });
     cJoin.call(drag);
 
-    // --- per-tick rendering -----------------------------------------------
     sim.on('tick', () => {
       const delaunay = d3.Delaunay.from(merged, (d) => d.x, (d) => d.y);
-      const voronoi = delaunay.voronoi([
-        CENTER.x - WORLD_R, CENTER.y - WORLD_R,
-        CENTER.x + WORLD_R, CENTER.y + WORLD_R,
-      ]);
+      const voronoi = delaunay.voronoi([PAD, PAD, WIDTH - PAD, HEIGHT - PAD]);
 
-      // Update each clipPath's path to match its Voronoi cell.
       clipJoin.select('path').attr('d', (_, i) => voronoi.renderCell(i));
 
-      // Update cell paths + flag image position/size.
       cJoin.each(function (d, i) {
         const cellPath = voronoi.renderCell(i);
         const node = d3.select(this);
@@ -242,7 +204,6 @@ export default function Bubbles({ year, metric, cursorFidget }) {
         .attr('y', (d) => d.y);
     });
 
-    // Pointer events on the SVG, used by the optional fidget force.
     svg
       .on('pointermove', (event) => {
         const [x, y] = d3.pointer(event, svgRef.current);
@@ -251,66 +212,17 @@ export default function Bubbles({ year, metric, cursorFidget }) {
       .on('pointerleave', () => {
         pointerRef.current.active = false;
       });
-
   }, [nodes, metric]);
-
-  // Continent label arc paths around the perimeter.
-  const labelArcs = useMemo(() => {
-    const labelR = WORLD_R + 18;
-    return CONTINENT_LABEL_ARCS.map((arc) => {
-      const a0 = ((arc.startDeg - 90) * Math.PI) / 180;
-      const a1 = ((arc.endDeg - 90) * Math.PI) / 180;
-      const x0 = CENTER.x + labelR * Math.cos(a0);
-      const y0 = CENTER.y + labelR * Math.sin(a0);
-      const x1 = CENTER.x + labelR * Math.cos(a1);
-      const y1 = CENTER.y + labelR * Math.sin(a1);
-      const largeArc = arc.endDeg - arc.startDeg > 180 ? 1 : 0;
-      return {
-        name: arc.name,
-        id: `arc-${arc.name.replace(/\s/g, '-')}`,
-        d: `M ${x0} ${y0} A ${labelR} ${labelR} 0 ${largeArc} 1 ${x1} ${y1}`,
-      };
-    });
-  }, []);
 
   return (
     <div className="bubbles-wrap">
       <svg ref={svgRef} viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="xMidYMid meet">
         <defs>
-          <clipPath id="world-clip">
-            <circle cx={CENTER.x} cy={CENTER.y} r={WORLD_R} />
-          </clipPath>
-          {/* d3 populates per-country clipPaths here */}
           <g className="clip-defs" />
-          {labelArcs.map((a) => (
-            <path key={a.id} id={a.id} d={a.d} fill="none" />
-          ))}
         </defs>
 
-        {/* Outer ring */}
-        <circle
-          cx={CENTER.x} cy={CENTER.y} r={WORLD_R}
-          fill="rgba(255,111,160,0.03)"
-          stroke="rgba(255,111,160,0.2)"
-          strokeWidth={1}
-        />
-
-        {/* Country cells (Voronoi-shaped, flexible) */}
-        <g className="countries" clipPath="url(#world-clip)" />
-
-        {/* Labels above the cells, outside any clip */}
+        <g className="countries" />
         <g className="labels" />
-
-        {/* Continent labels around the perimeter */}
-        <g className="continent-labels">
-          {labelArcs.map((a) => (
-            <text key={a.id} fill="rgba(255,255,255,0.55)" fontSize={14} fontWeight={700} letterSpacing="0.3em">
-              <textPath href={`#${a.id}`} startOffset="50%" textAnchor="middle">
-                {a.name}
-              </textPath>
-            </text>
-          ))}
-        </g>
       </svg>
 
       {hovered && (
