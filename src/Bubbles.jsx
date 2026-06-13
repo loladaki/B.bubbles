@@ -1,12 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import { COUNTRIES, CONTINENTS, interpolate } from './data/countries.js';
+import { COUNTRIES, interpolate } from './data/countries.js';
 
 const WIDTH = 1000;
 const HEIGHT = 700;
-const PAD = 8;
-const MIN_R = 14;
-const MAX_R = 100;
+const PAD = 4;
+const MIN_R = 18;
+const MAX_R = 120;
+
+// Build a smooth, soap-bubble-like closed path through the midpoints of a
+// polygon's edges, using each vertex as a quadratic control point. Rounds the
+// hard Voronoi corners into soft, flexible blobs.
+function smoothCell(points) {
+  if (!points || points.length < 3) return '';
+  const n = points.length;
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const m0 = mid(points[n - 1], points[0]);
+  let d = `M ${m0[0].toFixed(1)} ${m0[1].toFixed(1)} `;
+  for (let i = 0; i < n; i++) {
+    const cur = points[i];
+    const next = points[(i + 1) % n];
+    const m = mid(cur, next);
+    d += `Q ${cur[0].toFixed(1)} ${cur[1].toFixed(1)} ${m[0].toFixed(1)} ${m[1].toFixed(1)} `;
+  }
+  return d + 'Z';
+}
 
 export default function Bubbles({ year, metric, cursorFidget }) {
   const svgRef = useRef(null);
@@ -34,6 +52,7 @@ export default function Bubbles({ year, metric, cursorFidget }) {
     const merged = nodes.map((n) => {
       const prev = existing.find((e) => e.code === n.code);
       if (prev) return { ...prev, ...n };
+      // Spread across the whole canvas so cells tessellate evenly.
       return {
         ...n,
         x: PAD + Math.random() * (WIDTH - 2 * PAD),
@@ -43,11 +62,13 @@ export default function Bubbles({ year, metric, cursorFidget }) {
 
     if (!simRef.current) {
       simRef.current = d3.forceSimulation(merged)
-        .force('x', d3.forceX(WIDTH / 2).strength(0.015))
-        .force('y', d3.forceY(HEIGHT / 2).strength(0.015))
+        // Very weak centering — just enough to avoid drift.
+        .force('x', d3.forceX(WIDTH / 2).strength(0.01))
+        .force('y', d3.forceY(HEIGHT / 2).strength(0.01))
+        // Spacing ∝ births/population, so big countries claim bigger cells.
         .force('collide', d3.forceCollide()
-          .radius((d) => d.r + 2)
-          .strength(0.85)
+          .radius((d) => d.r)
+          .strength(0.9)
           .iterations(4))
         .force('pointer', (alpha) => {
           if (!fidgetRef.current) return;
@@ -58,7 +79,7 @@ export default function Bubbles({ year, metric, cursorFidget }) {
             const dx = n.x - p.x;
             const dy = n.y - p.y;
             const dist = Math.sqrt(dx * dx + dy * dy) || 0.0001;
-            const reach = 90 + n.r;
+            const reach = 110 + n.r;
             if (dist < reach) {
               const push = (1 - dist / reach) * 6 * alpha * 30;
               n.vx += (dx / dist) * push;
@@ -66,81 +87,45 @@ export default function Bubbles({ year, metric, cursorFidget }) {
             }
           }
         })
-        // Rectangular bound: keep bubbles inside the canvas.
         .force('bound', () => {
           const ns = simRef.current.nodes();
           for (const n of ns) {
-            const minX = PAD + n.r;
-            const maxX = WIDTH - PAD - n.r;
-            const minY = PAD + n.r;
-            const maxY = HEIGHT - PAD - n.r;
-            if (n.x < minX) { n.x = minX; n.vx *= -0.4; }
-            if (n.x > maxX) { n.x = maxX; n.vx *= -0.4; }
-            if (n.y < minY) { n.y = minY; n.vy *= -0.4; }
-            if (n.y > maxY) { n.y = maxY; n.vy *= -0.4; }
+            if (n.x < PAD) { n.x = PAD; n.vx *= -0.4; }
+            if (n.x > WIDTH - PAD) { n.x = WIDTH - PAD; n.vx *= -0.4; }
+            if (n.y < PAD) { n.y = PAD; n.vy *= -0.4; }
+            if (n.y > HEIGHT - PAD) { n.y = HEIGHT - PAD; n.vy *= -0.4; }
           }
         })
         .alphaDecay(0.012)
-        .velocityDecay(0.2)
+        .velocityDecay(0.22)
         .alphaMin(0.001);
-      simRef.current.alphaTarget(0.02);
+      simRef.current.alphaTarget(0.015);
     } else {
       simRef.current.nodes(merged);
-      simRef.current.force('collide').radius((d) => d.r + 2);
-      simRef.current.alpha(0.4).restart();
+      simRef.current.force('collide').radius((d) => d.r);
+      simRef.current.alpha(0.5).restart();
     }
 
     const sim = simRef.current;
 
-    // Per-country clipPaths (each path is updated per tick).
-    const clipDefs = svg.select('g.clip-defs');
-    const clipJoin = clipDefs.selectAll('clipPath.cell-clip')
+    // One flexible, flag-filled cell per country.
+    const cellsG = svg.select('g.cells');
+    const cJoin = cellsG.selectAll('path.cell')
       .data(merged, (d) => d.code)
-      .join((enter) => {
-        const cp = enter.append('clipPath')
-          .attr('class', 'cell-clip')
-          .attr('id', (d) => `cell-clip-${d.code}`);
-        cp.append('path');
-        return cp;
-      });
-
-    // Country = Voronoi cell filled with flag image.
-    const countriesG = svg.select('g.countries');
-    const cJoin = countriesG.selectAll('g.country')
-      .data(merged, (d) => d.code)
-      .join((enter) => {
-        const g = enter.append('g')
-          .attr('class', 'country')
-          .style('cursor', 'grab');
-
-        g.append('path')
-          .attr('class', 'cell-fill')
-          .attr('fill', (d) => CONTINENTS[d.continent].color)
-          .attr('fill-opacity', 0.45)
-          .attr('stroke', 'none');
-
-        g.append('image')
-          .attr('class', 'flag-img')
-          .attr('href', (d) => `https://flagcdn.com/w320/${d.iso2}.png`)
-          .attr('preserveAspectRatio', 'xMidYMid slice')
-          .attr('opacity', 0.78)
-          .attr('clip-path', (d) => `url(#cell-clip-${d.code})`);
-
-        g.append('path')
-          .attr('class', 'cell-border')
-          .attr('fill', 'none')
-          .attr('stroke', 'rgba(255,255,255,0.28)')
-          .attr('stroke-width', 1)
-          .attr('stroke-linejoin', 'round');
-
-        return g;
-      });
+      .join((enter) =>
+        enter.append('path')
+          .attr('class', 'cell')
+          .style('cursor', 'grab')
+          .attr('fill', (d) => `url(#flag-${d.code})`)
+          .attr('stroke', 'none')
+      );
 
     cJoin.on('mouseenter', (_, d) => setHovered(d))
          .on('mouseleave', () => setHovered(null));
 
+    // Labels on top, crisp.
     const labelsG = svg.select('g.labels');
-    const labelJoin = labelsG.selectAll('text.code-label')
+    const lJoin = labelsG.selectAll('text.code-label')
       .data(merged, (d) => d.code)
       .join((enter) =>
         enter.append('text')
@@ -152,17 +137,17 @@ export default function Bubbles({ year, metric, cursorFidget }) {
           .attr('pointer-events', 'none')
           .attr('font-family', 'system-ui, sans-serif')
           .attr('paint-order', 'stroke')
-          .attr('stroke', 'rgba(0,0,0,0.75)')
-          .attr('stroke-width', 3)
+          .attr('stroke', 'rgba(0,0,0,0.55)')
+          .attr('stroke-width', 3.5)
           .attr('stroke-linejoin', 'round')
       );
-    labelJoin
-      .attr('font-size', (d) => Math.max(11, Math.min(20, d.r / 2.6)))
-      .text((d) => (d.r > 24 ? d.code : ''));
+    lJoin
+      .attr('font-size', (d) => Math.max(12, Math.min(22, d.r / 2.4)))
+      .text((d) => (d.r > 30 ? d.code : ''));
 
     const drag = d3.drag()
       .on('start', (event, d) => {
-        sim.alphaTarget(0.35).restart();
+        sim.alphaTarget(0.3).restart();
         d.fx = d.x; d.fy = d.y;
         d._lastvx = 0; d._lastvy = 0;
       })
@@ -173,36 +158,21 @@ export default function Bubbles({ year, metric, cursorFidget }) {
       })
       .on('end', (event, d) => {
         d.fx = null; d.fy = null;
-        d.vx = (d._lastvx || 0) * 4;
-        d.vy = (d._lastvy || 0) * 4;
-        sim.alphaTarget(0.02);
-        sim.alpha(0.6).restart();
+        d.vx = (d._lastvx || 0) * 3;
+        d.vy = (d._lastvy || 0) * 3;
+        sim.alphaTarget(0.015);
+        sim.alpha(0.5).restart();
       });
     cJoin.call(drag);
 
-    sim.on('tick', () => {
+    const render = () => {
       const delaunay = d3.Delaunay.from(merged, (d) => d.x, (d) => d.y);
       const voronoi = delaunay.voronoi([PAD, PAD, WIDTH - PAD, HEIGHT - PAD]);
-
-      clipJoin.select('path').attr('d', (_, i) => voronoi.renderCell(i));
-
-      cJoin.each(function (d, i) {
-        const cellPath = voronoi.renderCell(i);
-        const node = d3.select(this);
-        node.select('path.cell-fill').attr('d', cellPath);
-        node.select('path.cell-border').attr('d', cellPath);
-        const size = d.r * 3;
-        node.select('image.flag-img')
-          .attr('x', d.x - size / 2)
-          .attr('y', d.y - size / 2)
-          .attr('width', size)
-          .attr('height', size);
-      });
-
-      labelJoin
-        .attr('x', (d) => d.x)
-        .attr('y', (d) => d.y);
-    });
+      cJoin.attr('d', (_, i) => smoothCell(voronoi.cellPolygon(i)));
+      lJoin.attr('x', (d) => d.x).attr('y', (d) => d.y);
+    };
+    sim.on('tick', render);
+    render(); // paint once immediately (covers static/headless first frame)
 
     svg
       .on('pointermove', (event) => {
@@ -218,10 +188,23 @@ export default function Bubbles({ year, metric, cursorFidget }) {
     <div className="bubbles-wrap">
       <svg ref={svgRef} viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="xMidYMid meet">
         <defs>
-          <g className="clip-defs" />
+          {COUNTRIES.map((c) => (
+            <pattern
+              key={c.code}
+              id={`flag-${c.code}`}
+              patternContentUnits="objectBoundingBox"
+              width="1" height="1"
+            >
+              <image
+                href={`https://flagcdn.com/w320/${c.iso2}.png`}
+                width="1" height="1"
+                preserveAspectRatio="xMidYMid slice"
+              />
+            </pattern>
+          ))}
         </defs>
 
-        <g className="countries" />
+        <g className="cells" />
         <g className="labels" />
       </svg>
 
