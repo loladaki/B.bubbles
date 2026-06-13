@@ -4,27 +4,10 @@ import { COUNTRIES, interpolate } from './data/countries.js';
 
 const WIDTH = 1000;
 const HEIGHT = 700;
-const PAD = 4;
-const MIN_R = 18;
-const MAX_R = 120;
-
-// Build a smooth, soap-bubble-like closed path through the midpoints of a
-// polygon's edges, using each vertex as a quadratic control point. Rounds the
-// hard Voronoi corners into soft, flexible blobs.
-function smoothCell(points) {
-  if (!points || points.length < 3) return '';
-  const n = points.length;
-  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-  const m0 = mid(points[n - 1], points[0]);
-  let d = `M ${m0[0].toFixed(1)} ${m0[1].toFixed(1)} `;
-  for (let i = 0; i < n; i++) {
-    const cur = points[i];
-    const next = points[(i + 1) % n];
-    const m = mid(cur, next);
-    d += `Q ${cur[0].toFixed(1)} ${cur[1].toFixed(1)} ${m[0].toFixed(1)} ${m[1].toFixed(1)} `;
-  }
-  return d + 'Z';
-}
+const PAD = 6;
+const MIN_R = 16;
+const MAX_R = 104;
+const GAP = 5; // clear space between balls so each stays distinct
 
 export default function Bubbles({ year, metric, cursorFidget }) {
   const svgRef = useRef(null);
@@ -52,22 +35,20 @@ export default function Bubbles({ year, metric, cursorFidget }) {
     const merged = nodes.map((n) => {
       const prev = existing.find((e) => e.code === n.code);
       if (prev) return { ...prev, ...n };
-      // Spread across the whole canvas so cells tessellate evenly.
       return {
         ...n,
-        x: PAD + Math.random() * (WIDTH - 2 * PAD),
-        y: PAD + Math.random() * (HEIGHT - 2 * PAD),
+        x: WIDTH / 2 + (Math.random() - 0.5) * 300,
+        y: HEIGHT / 2 + (Math.random() - 0.5) * 220,
       };
     });
 
     if (!simRef.current) {
       simRef.current = d3.forceSimulation(merged)
-        // Very weak centering — just enough to avoid drift.
-        .force('x', d3.forceX(WIDTH / 2).strength(0.01))
-        .force('y', d3.forceY(HEIGHT / 2).strength(0.01))
-        // Spacing ∝ births/population, so big countries claim bigger cells.
+        .force('x', d3.forceX(WIDTH / 2).strength(0.04))
+        .force('y', d3.forceY(HEIGHT / 2).strength(0.05))
+        // Keep a clear gap between balls — no jumbled mass.
         .force('collide', d3.forceCollide()
-          .radius((d) => d.r)
+          .radius((d) => d.r + GAP)
           .strength(0.9)
           .iterations(4))
         .force('pointer', (alpha) => {
@@ -79,7 +60,7 @@ export default function Bubbles({ year, metric, cursorFidget }) {
             const dx = n.x - p.x;
             const dy = n.y - p.y;
             const dist = Math.sqrt(dx * dx + dy * dy) || 0.0001;
-            const reach = 110 + n.r;
+            const reach = 100 + n.r;
             if (dist < reach) {
               const push = (1 - dist / reach) * 6 * alpha * 30;
               n.vx += (dx / dist) * push;
@@ -90,40 +71,60 @@ export default function Bubbles({ year, metric, cursorFidget }) {
         .force('bound', () => {
           const ns = simRef.current.nodes();
           for (const n of ns) {
-            if (n.x < PAD) { n.x = PAD; n.vx *= -0.4; }
-            if (n.x > WIDTH - PAD) { n.x = WIDTH - PAD; n.vx *= -0.4; }
-            if (n.y < PAD) { n.y = PAD; n.vy *= -0.4; }
-            if (n.y > HEIGHT - PAD) { n.y = HEIGHT - PAD; n.vy *= -0.4; }
+            const minX = PAD + n.r, maxX = WIDTH - PAD - n.r;
+            const minY = PAD + n.r, maxY = HEIGHT - PAD - n.r;
+            if (n.x < minX) { n.x = minX; n.vx *= -0.4; }
+            if (n.x > maxX) { n.x = maxX; n.vx *= -0.4; }
+            if (n.y < minY) { n.y = minY; n.vy *= -0.4; }
+            if (n.y > maxY) { n.y = maxY; n.vy *= -0.4; }
           }
         })
-        .alphaDecay(0.012)
+        .alphaDecay(0.015)
         .velocityDecay(0.22)
         .alphaMin(0.001);
-      simRef.current.alphaTarget(0.015);
+      simRef.current.alphaTarget(0.01);
     } else {
       simRef.current.nodes(merged);
-      simRef.current.force('collide').radius((d) => d.r);
+      simRef.current.force('collide').radius((d) => d.r + GAP);
       simRef.current.alpha(0.5).restart();
     }
 
     const sim = simRef.current;
 
-    // One flexible, flag-filled cell per country.
-    const cellsG = svg.select('g.cells');
-    const cJoin = cellsG.selectAll('path.cell')
+    // Each ball is a <g> (so we can squash it) holding a flag-filled circle.
+    const ballsG = svg.select('g.balls');
+    const bJoin = ballsG.selectAll('g.ball')
       .data(merged, (d) => d.code)
-      .join((enter) =>
-        enter.append('path')
-          .attr('class', 'cell')
-          .style('cursor', 'grab')
+      .join((enter) => {
+        const g = enter.append('g').attr('class', 'ball').style('cursor', 'grab');
+        g.append('circle')
+          .attr('class', 'flag')
+          .attr('r', (d) => d.r)
           .attr('fill', (d) => `url(#flag-${d.code})`)
-          .attr('stroke', 'none')
-      );
+          .attr('stroke', 'rgba(255,255,255,0.22)')
+          .attr('stroke-width', 1.5);
+        // Soft top-left sheen for a subtle soap-bubble feel.
+        g.append('ellipse')
+          .attr('class', 'sheen')
+          .attr('fill', 'rgba(255,255,255,0.28)')
+          .attr('pointer-events', 'none');
+        return g;
+      });
 
-    cJoin.on('mouseenter', (_, d) => setHovered(d))
+    bJoin.select('circle.flag')
+      .transition().duration(500)
+      .attr('r', (d) => d.r);
+    bJoin.select('ellipse.sheen')
+      .attr('cx', (d) => -d.r * 0.3)
+      .attr('cy', (d) => -d.r * 0.4)
+      .attr('rx', (d) => d.r * 0.32)
+      .attr('ry', (d) => d.r * 0.2)
+      .attr('transform', (d) => `rotate(-28 ${-d.r * 0.3} ${-d.r * 0.4})`);
+
+    bJoin.on('mouseenter', (_, d) => setHovered(d))
          .on('mouseleave', () => setHovered(null));
 
-    // Labels on top, crisp.
+    // Labels on a separate, unsquashed layer so they stay crisp.
     const labelsG = svg.select('g.labels');
     const lJoin = labelsG.selectAll('text.code-label')
       .data(merged, (d) => d.code)
@@ -142,8 +143,8 @@ export default function Bubbles({ year, metric, cursorFidget }) {
           .attr('stroke-linejoin', 'round')
       );
     lJoin
-      .attr('font-size', (d) => Math.max(12, Math.min(22, d.r / 2.4)))
-      .text((d) => (d.r > 30 ? d.code : ''));
+      .attr('font-size', (d) => Math.max(11, Math.min(20, d.r / 2.6)))
+      .text((d) => (d.r > 26 ? d.code : ''));
 
     const drag = d3.drag()
       .on('start', (event, d) => {
@@ -160,19 +161,27 @@ export default function Bubbles({ year, metric, cursorFidget }) {
         d.fx = null; d.fy = null;
         d.vx = (d._lastvx || 0) * 3;
         d.vy = (d._lastvy || 0) * 3;
-        sim.alphaTarget(0.015);
+        sim.alphaTarget(0.01);
         sim.alpha(0.5).restart();
       });
-    cJoin.call(drag);
+    bJoin.call(drag);
 
     const render = () => {
-      const delaunay = d3.Delaunay.from(merged, (d) => d.x, (d) => d.y);
-      const voronoi = delaunay.voronoi([PAD, PAD, WIDTH - PAD, HEIGHT - PAD]);
-      cJoin.attr('d', (_, i) => smoothCell(voronoi.cellPolygon(i)));
+      const t = performance.now();
+      bJoin.attr('transform', (d, i) => {
+        const speed = Math.sqrt((d.vx || 0) ** 2 + (d.vy || 0) ** 2);
+        // Subtle directional squash (jelly), upright (no net rotation).
+        const k = Math.min(0.14, speed * 0.009);
+        const ang = (Math.atan2(d.vy || 0, d.vx || 0) * 180) / Math.PI;
+        const breath = 1 + 0.012 * Math.sin(t / 720 + i * 0.6);
+        const sx = (1 + k) * breath;
+        const sy = (1 - k) * breath;
+        return `translate(${d.x},${d.y}) rotate(${ang}) scale(${sx.toFixed(3)},${sy.toFixed(3)}) rotate(${-ang})`;
+      });
       lJoin.attr('x', (d) => d.x).attr('y', (d) => d.y);
     };
     sim.on('tick', render);
-    render(); // paint once immediately (covers static/headless first frame)
+    render();
 
     svg
       .on('pointermove', (event) => {
@@ -204,7 +213,7 @@ export default function Bubbles({ year, metric, cursorFidget }) {
           ))}
         </defs>
 
-        <g className="cells" />
+        <g className="balls" />
         <g className="labels" />
       </svg>
 
