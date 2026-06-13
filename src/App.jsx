@@ -5,9 +5,10 @@ import './App.css';
 
 export default function App() {
   const [year, setYear] = useState(2025);
-  const [metric, setMetric] = useState('births');         // 'births' | 'pop'
-  const [groupByContinent, setGroupByContinent] = useState(true);
+  const [metric, setMetric] = useState('births');
   const [cursorFidget, setCursorFidget] = useState(false);
+  // Incrementing signal that tells <Bubbles> to re-group countries by continent.
+  const [groupSignal, setGroupSignal] = useState(0);
 
   const totals = COUNTRIES.reduce((acc, c) => {
     const v = interpolate(c[metric], year);
@@ -21,8 +22,8 @@ export default function App() {
       <header className="header">
         <h1><span className="dot">●</span> B.bubbles</h1>
         <p className="tagline">
-          The world's {metric === 'births' ? 'births' : 'population'} in <strong>{year}</strong>, as living bubbles.
-          Drag them. Throw them. Slide through time.
+          The world's {metric === 'births' ? 'births' : 'population'} in <strong>{year}</strong>, as soap-bubble countries.
+          Drag them. Throw them. Watch them merge.
         </p>
       </header>
 
@@ -37,10 +38,9 @@ export default function App() {
 
         <div className="control-group">
           <label>Layout</label>
-          <div className="toggle">
-            <button className={groupByContinent ? 'on' : ''} onClick={() => setGroupByContinent(true)}>By continent</button>
-            <button className={!groupByContinent ? 'on' : ''} onClick={() => setGroupByContinent(false)}>Free</button>
-          </div>
+          <button className="action-btn" onClick={() => setGroupSignal((n) => n + 1)}>
+            ↻ Group by continent
+          </button>
         </div>
 
         <div className="control-group">
@@ -66,8 +66,8 @@ export default function App() {
       <Bubbles
         year={year}
         metric={metric}
-        groupByContinent={groupByContinent}
         cursorFidget={cursorFidget}
+        groupSignal={groupSignal}
       />
 
       <div className="legend">
