@@ -6,16 +6,16 @@ const WIDTH = 1000;
 const HEIGHT = 700;
 const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
 const WORLD_R = 320;
-const MIN_R = 9;
-const MAX_R = 100;
+const MIN_R = 14;
+const MAX_R = 92;
 
 const CONTINENT_CENTERS = {
-  'Europe':     { x: 380, y: 130 },
-  'N. America': { x: 220, y: 270 },
-  'Asia':       { x: 700, y: 300 },
-  'S. America': { x: 250, y: 530 },
+  'Europe':     { x: 400, y: 140 },
+  'N. America': { x: 230, y: 280 },
+  'Asia':       { x: 700, y: 290 },
+  'S. America': { x: 260, y: 520 },
   'Africa':     { x: 520, y: 510 },
-  'Oceania':    { x: 740, y: 540 },
+  'Oceania':    { x: 730, y: 540 },
 };
 
 const CONTINENT_LABEL_ARCS = [
@@ -32,6 +32,7 @@ export default function Bubbles({ year, metric, cursorFidget, groupSignal }) {
   const simRef = useRef(null);
   const pointerRef = useRef({ x: null, y: null, active: false });
   const fidgetRef = useRef(cursorFidget);
+  const didInitialGroupRef = useRef(false);
   fidgetRef.current = cursorFidget;
   const [hovered, setHovered] = useState(null);
 
@@ -48,28 +49,27 @@ export default function Bubbles({ year, metric, cursorFidget, groupSignal }) {
 
   useEffect(() => {
     const svg = d3.select(svgRef.current);
+    const isFirstMount = !simRef.current;
 
     const existing = simRef.current ? simRef.current.nodes() : [];
     const merged = nodes.map((n) => {
       const prev = existing.find((e) => e.code === n.code);
       if (prev) return { ...prev, ...n };
-      // First-time seeding: place each country inside its continent zone.
       const seed = CONTINENT_CENTERS[n.continent] || CENTER;
       return {
         ...n,
-        x: seed.x + (Math.random() - 0.5) * 60,
-        y: seed.y + (Math.random() - 0.5) * 60,
+        x: seed.x + (Math.random() - 0.5) * 30,
+        y: seed.y + (Math.random() - 0.5) * 30,
       };
     });
 
     if (!simRef.current) {
       simRef.current = d3.forceSimulation(merged)
-        // Weak general pull toward world center — gives "free" feel.
-        .force('x', d3.forceX(CENTER.x).strength(0.025))
-        .force('y', d3.forceY(CENTER.y).strength(0.025))
+        .force('x', d3.forceX(CENTER.x).strength(0.02))
+        .force('y', d3.forceY(CENTER.y).strength(0.02))
         .force('collide', d3.forceCollide()
-          .radius((d) => d.r + 1)
-          .strength(0.8)
+          .radius((d) => d.r + 2)
+          .strength(0.85)
           .iterations(4))
         .force('pointer', (alpha) => {
           if (!fidgetRef.current) return;
@@ -104,69 +104,73 @@ export default function Bubbles({ year, metric, cursorFidget, groupSignal }) {
             }
           }
         })
-        .alphaDecay(0.01)
-        .velocityDecay(0.18)
+        .alphaDecay(0.012)
+        .velocityDecay(0.2)
         .alphaMin(0.001);
       simRef.current.alphaTarget(0.02);
     } else {
       simRef.current.nodes(merged);
-      simRef.current.force('collide').radius((d) => d.r + 1);
-      simRef.current.alpha(0.5).restart();
+      simRef.current.force('collide').radius((d) => d.r + 2);
+      simRef.current.alpha(0.4).restart();
     }
 
     const sim = simRef.current;
-    const cellsG = svg.select('g.cells');
-    const skinG = svg.select('g.skins');
-    const bubblesG = svg.select('g.bubbles');
-    const labelsG = svg.select('g.labels');
 
-    // Voronoi tiles under everything.
-    const cellsJoin = cellsG.selectAll('path.cell')
-      .data(merged, (d) => d.code)
-      .join((enter) =>
-        enter.append('path')
-          .attr('class', 'cell')
-          .attr('fill-opacity', 0.18)
-          .attr('stroke', 'rgba(255,255,255,0.06)')
-          .attr('stroke-width', 1)
-      );
-    cellsJoin.attr('fill', (d) => CONTINENTS[d.continent].color);
+    // --- d3 joins ----------------------------------------------------------
 
-    // Soap-bubble skin: solid white circles BEHIND flags, with gooey filter.
-    // These merge into a single blob where they touch.
-    const skinJoin = skinG.selectAll('circle.skin')
-      .data(merged, (d) => d.code)
-      .join((enter) =>
-        enter.append('circle')
-          .attr('class', 'skin')
-          .attr('fill', '#ffe4ef')
-      );
-    skinJoin
-      .transition().duration(600)
-      .attr('r', (d) => d.r + 2);
-
-    // Flag bubbles on top — translucent so the tile color bleeds through.
-    const join = bubblesG.selectAll('g.bubble')
+    // Per-country clipPath definitions (each holds a path updated per tick).
+    const clipDefs = svg.select('g.clip-defs');
+    const clipJoin = clipDefs.selectAll('clipPath.cell-clip')
       .data(merged, (d) => d.code)
       .join((enter) => {
-        const node = enter.append('g').attr('class', 'bubble').style('cursor', 'grab');
-        node.append('circle')
-          .attr('class', 'flag-circle')
-          .attr('fill', (d) => `url(#flag-${d.code})`)
-          .attr('fill-opacity', 0.82)
-          .attr('stroke', 'rgba(255,255,255,0.35)')
-          .attr('stroke-width', 1);
-        return node;
+        const cp = enter.append('clipPath')
+          .attr('class', 'cell-clip')
+          .attr('id', (d) => `cell-clip-${d.code}`);
+        cp.append('path');
+        return cp;
       });
 
-    join.select('circle.flag-circle')
-      .transition().duration(600)
-      .attr('r', (d) => d.r);
+    // Country groups: each is a Voronoi cell filled with a flag image.
+    const countriesG = svg.select('g.countries');
+    const cJoin = countriesG.selectAll('g.country')
+      .data(merged, (d) => d.code)
+      .join((enter) => {
+        const g = enter.append('g')
+          .attr('class', 'country')
+          .style('cursor', 'grab');
 
-    join.on('mouseenter', (_, d) => setHovered(d))
-        .on('mouseleave', () => setHovered(null));
+        // Continent-tinted background fill of the cell.
+        g.append('path')
+          .attr('class', 'cell-fill')
+          .attr('fill', (d) => CONTINENTS[d.continent].color)
+          .attr('fill-opacity', 0.45)
+          .attr('stroke', 'none');
 
-    // Labels live outside the gooey filter so they stay sharp.
+        // Flag image, clipped to the cell shape so the flag IS the country's
+        // flexible shape (no perfect circles anywhere).
+        g.append('image')
+          .attr('class', 'flag-img')
+          .attr('href', (d) => `https://flagcdn.com/w320/${d.iso2}.png`)
+          .attr('preserveAspectRatio', 'xMidYMid slice')
+          .attr('opacity', 0.78)
+          .attr('clip-path', (d) => `url(#cell-clip-${d.code})`);
+
+        // Subtle border drawn on top.
+        g.append('path')
+          .attr('class', 'cell-border')
+          .attr('fill', 'none')
+          .attr('stroke', 'rgba(255,255,255,0.28)')
+          .attr('stroke-width', 1)
+          .attr('stroke-linejoin', 'round');
+
+        return g;
+      });
+
+    cJoin.on('mouseenter', (_, d) => setHovered(d))
+         .on('mouseleave', () => setHovered(null));
+
+    // Labels (country codes) outside the cell so they stay crisp.
+    const labelsG = svg.select('g.labels');
     const labelJoin = labelsG.selectAll('text.code-label')
       .data(merged, (d) => d.code)
       .join((enter) =>
@@ -179,14 +183,15 @@ export default function Bubbles({ year, metric, cursorFidget, groupSignal }) {
           .attr('pointer-events', 'none')
           .attr('font-family', 'system-ui, sans-serif')
           .attr('paint-order', 'stroke')
-          .attr('stroke', 'rgba(0,0,0,0.65)')
+          .attr('stroke', 'rgba(0,0,0,0.75)')
           .attr('stroke-width', 3)
           .attr('stroke-linejoin', 'round')
       );
     labelJoin
-      .attr('font-size', (d) => Math.max(10, Math.min(20, d.r / 2.8)))
-      .text((d) => (d.r > 26 ? d.code : ''));
+      .attr('font-size', (d) => Math.max(11, Math.min(20, d.r / 2.6)))
+      .text((d) => (d.r > 24 ? d.code : ''));
 
+    // Drag with throw momentum.
     const drag = d3.drag()
       .on('start', (event, d) => {
         sim.alphaTarget(0.35).restart();
@@ -205,24 +210,31 @@ export default function Bubbles({ year, metric, cursorFidget, groupSignal }) {
         sim.alphaTarget(0.02);
         sim.alpha(0.6).restart();
       });
-    join.call(drag);
+    cJoin.call(drag);
 
+    // --- per-tick rendering -----------------------------------------------
     sim.on('tick', () => {
-      const t = performance.now();
-
       const delaunay = d3.Delaunay.from(merged, (d) => d.x, (d) => d.y);
-      const voronoi = delaunay.voronoi([0, 0, WIDTH, HEIGHT]);
-      cellsJoin.attr('d', (_d, i) => voronoi.renderCell(i));
+      const voronoi = delaunay.voronoi([
+        CENTER.x - WORLD_R, CENTER.y - WORLD_R,
+        CENTER.x + WORLD_R, CENTER.y + WORLD_R,
+      ]);
 
-      skinJoin
-        .attr('cx', (d) => d.x)
-        .attr('cy', (d) => d.y);
+      // Update each clipPath's path to match its Voronoi cell.
+      clipJoin.select('path').attr('d', (_, i) => voronoi.renderCell(i));
 
-      join.attr('transform', (d, i) => {
-        const speed = Math.sqrt((d.vx || 0) ** 2 + (d.vy || 0) ** 2);
-        const breath = 1 + 0.012 * Math.sin(t / 700 + i * 0.7);
-        const wobble = Math.min(0.08, speed * 0.006);
-        return `translate(${d.x},${d.y}) scale(${breath + wobble})`;
+      // Update cell paths + flag image position/size.
+      cJoin.each(function (d, i) {
+        const cellPath = voronoi.renderCell(i);
+        const node = d3.select(this);
+        node.select('path.cell-fill').attr('d', cellPath);
+        node.select('path.cell-border').attr('d', cellPath);
+        const size = d.r * 3;
+        node.select('image.flag-img')
+          .attr('x', d.x - size / 2)
+          .attr('y', d.y - size / 2)
+          .attr('width', size)
+          .attr('height', size);
       });
 
       labelJoin
@@ -230,6 +242,7 @@ export default function Bubbles({ year, metric, cursorFidget, groupSignal }) {
         .attr('y', (d) => d.y);
     });
 
+    // Pointer events on the SVG, used by the optional fidget force.
     svg
       .on('pointermove', (event) => {
         const [x, y] = d3.pointer(event, svgRef.current);
@@ -238,10 +251,28 @@ export default function Bubbles({ year, metric, cursorFidget, groupSignal }) {
       .on('pointerleave', () => {
         pointerRef.current.active = false;
       });
+
+    // On very first mount, pin each country to its continent zone for a
+    // moment so the user actually SEES the continent organisation, then
+    // release into free movement.
+    if (isFirstMount && !didInitialGroupRef.current) {
+      didInitialGroupRef.current = true;
+      const ns = sim.nodes();
+      ns.forEach((n) => {
+        const c = CONTINENT_CENTERS[n.continent] || CENTER;
+        n.fx = c.x + (Math.random() - 0.5) * 50;
+        n.fy = c.y + (Math.random() - 0.5) * 50;
+      });
+      sim.alpha(1).restart();
+      const tid = setTimeout(() => {
+        ns.forEach((n) => { n.fx = null; n.fy = null; });
+        sim.alpha(0.4).restart();
+      }, 1400);
+      return () => clearTimeout(tid);
+    }
   }, [nodes, metric]);
 
-  // React to "Group by continent" button: snap each country back to its zone
-  // with a brief fx/fy lock, then release to free movement.
+  // "Group by continent" button signal: snap back to continent zones briefly.
   useEffect(() => {
     if (!simRef.current || groupSignal === 0) return;
     const sim = simRef.current;
@@ -252,13 +283,14 @@ export default function Bubbles({ year, metric, cursorFidget, groupSignal }) {
       n.fy = c.y + (Math.random() - 0.5) * 50;
     });
     sim.alpha(1).restart();
-    const t = setTimeout(() => {
+    const tid = setTimeout(() => {
       ns.forEach((n) => { n.fx = null; n.fy = null; });
       sim.alpha(0.5).restart();
-    }, 900);
-    return () => clearTimeout(t);
+    }, 1000);
+    return () => clearTimeout(tid);
   }, [groupSignal]);
 
+  // Continent label arc paths around the perimeter.
   const labelArcs = useMemo(() => {
     const labelR = WORLD_R + 18;
     return CONTINENT_LABEL_ARCS.map((arc) => {
@@ -281,60 +313,34 @@ export default function Bubbles({ year, metric, cursorFidget, groupSignal }) {
     <div className="bubbles-wrap">
       <svg ref={svgRef} viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="xMidYMid meet">
         <defs>
-          {COUNTRIES.map((c) => (
-            <pattern
-              key={c.code}
-              id={`flag-${c.code}`}
-              patternContentUnits="objectBoundingBox"
-              width="1" height="1"
-            >
-              <image
-                href={`https://flagcdn.com/w320/${c.iso2}.png`}
-                width="1" height="1"
-                preserveAspectRatio="xMidYMid slice"
-              />
-            </pattern>
-          ))}
           <clipPath id="world-clip">
             <circle cx={CENTER.x} cy={CENTER.y} r={WORLD_R} />
           </clipPath>
-          {/* Soap bubble morph filter: blur + threshold alpha so nearby
-              shapes merge into one continuous blob. */}
-          <filter id="goo">
-            <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur" />
-            <feColorMatrix in="blur" type="matrix"
-              values="1 0 0 0 0
-                      0 1 0 0 0
-                      0 0 1 0 0
-                      0 0 0 22 -11" result="goo" />
-            <feComposite in="SourceGraphic" in2="goo" operator="atop" />
-          </filter>
+          {/* d3 populates per-country clipPaths here */}
+          <g className="clip-defs" />
           {labelArcs.map((a) => (
             <path key={a.id} id={a.id} d={a.d} fill="none" />
           ))}
         </defs>
 
+        {/* Outer ring */}
         <circle
           cx={CENTER.x} cy={CENTER.y} r={WORLD_R}
           fill="rgba(255,111,160,0.03)"
-          stroke="rgba(255,111,160,0.18)"
+          stroke="rgba(255,111,160,0.2)"
           strokeWidth={1}
         />
 
-        <g className="cells" clipPath="url(#world-clip)" />
+        {/* Country cells (Voronoi-shaped, flexible) */}
+        <g className="countries" clipPath="url(#world-clip)" />
 
-        {/* Skins + flags inside the gooey filter so touching bubbles merge. */}
-        <g filter="url(#goo)">
-          <g className="skins" />
-          <g className="bubbles" />
-        </g>
-
-        {/* Labels outside the filter so text stays sharp. */}
+        {/* Labels above the cells, outside any clip */}
         <g className="labels" />
 
+        {/* Continent labels around the perimeter */}
         <g className="continent-labels">
           {labelArcs.map((a) => (
-            <text key={a.id} fill="rgba(255,255,255,0.5)" fontSize={14} fontWeight={700} letterSpacing="0.3em">
+            <text key={a.id} fill="rgba(255,255,255,0.55)" fontSize={14} fontWeight={700} letterSpacing="0.3em">
               <textPath href={`#${a.id}`} startOffset="50%" textAnchor="middle">
                 {a.name}
               </textPath>
