@@ -7,8 +7,6 @@ export default function App() {
   const [year, setYear] = useState(2025);
   const [metric, setMetric] = useState('births');
   const [cursorFidget, setCursorFidget] = useState(false);
-  // Incrementing signal that tells <Bubbles> to re-group countries by continent.
-  const [groupSignal, setGroupSignal] = useState(0);
 
   const totals = COUNTRIES.reduce((acc, c) => {
     const v = interpolate(c[metric], year);
@@ -37,13 +35,6 @@ export default function App() {
         </div>
 
         <div className="control-group">
-          <label>Layout</label>
-          <button className="action-btn" onClick={() => setGroupSignal((n) => n + 1)}>
-            ↻ Group by continent
-          </button>
-        </div>
-
-        <div className="control-group">
           <label>Cursor fidget</label>
           <div className="toggle">
             <button className={!cursorFidget ? 'on' : ''} onClick={() => setCursorFidget(false)}>Off</button>
@@ -67,7 +58,6 @@ export default function App() {
         year={year}
         metric={metric}
         cursorFidget={cursorFidget}
-        groupSignal={groupSignal}
       />
 
       <div className="legend">

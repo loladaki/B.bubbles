@@ -27,12 +27,11 @@ const CONTINENT_LABEL_ARCS = [
   { name: 'NORTH AMERICA', startDeg: 285, endDeg: 350 },
 ];
 
-export default function Bubbles({ year, metric, cursorFidget, groupSignal }) {
+export default function Bubbles({ year, metric, cursorFidget }) {
   const svgRef = useRef(null);
   const simRef = useRef(null);
   const pointerRef = useRef({ x: null, y: null, active: false });
   const fidgetRef = useRef(cursorFidget);
-  const didInitialGroupRef = useRef(false);
   fidgetRef.current = cursorFidget;
   const [hovered, setHovered] = useState(null);
 
@@ -49,17 +48,18 @@ export default function Bubbles({ year, metric, cursorFidget, groupSignal }) {
 
   useEffect(() => {
     const svg = d3.select(svgRef.current);
-    const isFirstMount = !simRef.current;
 
     const existing = simRef.current ? simRef.current.nodes() : [];
     const merged = nodes.map((n) => {
       const prev = existing.find((e) => e.code === n.code);
       if (prev) return { ...prev, ...n };
-      const seed = CONTINENT_CENTERS[n.continent] || CENTER;
+      // Seed inside the world disk at a random angle.
+      const angle = Math.random() * Math.PI * 2;
+      const radius = Math.random() * (WORLD_R * 0.6);
       return {
         ...n,
-        x: seed.x + (Math.random() - 0.5) * 30,
-        y: seed.y + (Math.random() - 0.5) * 30,
+        x: CENTER.x + Math.cos(angle) * radius,
+        y: CENTER.y + Math.sin(angle) * radius,
       };
     });
 
@@ -252,43 +252,7 @@ export default function Bubbles({ year, metric, cursorFidget, groupSignal }) {
         pointerRef.current.active = false;
       });
 
-    // On very first mount, pin each country to its continent zone for a
-    // moment so the user actually SEES the continent organisation, then
-    // release into free movement.
-    if (isFirstMount && !didInitialGroupRef.current) {
-      didInitialGroupRef.current = true;
-      const ns = sim.nodes();
-      ns.forEach((n) => {
-        const c = CONTINENT_CENTERS[n.continent] || CENTER;
-        n.fx = c.x + (Math.random() - 0.5) * 50;
-        n.fy = c.y + (Math.random() - 0.5) * 50;
-      });
-      sim.alpha(1).restart();
-      const tid = setTimeout(() => {
-        ns.forEach((n) => { n.fx = null; n.fy = null; });
-        sim.alpha(0.4).restart();
-      }, 1400);
-      return () => clearTimeout(tid);
-    }
   }, [nodes, metric]);
-
-  // "Group by continent" button signal: snap back to continent zones briefly.
-  useEffect(() => {
-    if (!simRef.current || groupSignal === 0) return;
-    const sim = simRef.current;
-    const ns = sim.nodes();
-    ns.forEach((n) => {
-      const c = CONTINENT_CENTERS[n.continent] || CENTER;
-      n.fx = c.x + (Math.random() - 0.5) * 50;
-      n.fy = c.y + (Math.random() - 0.5) * 50;
-    });
-    sim.alpha(1).restart();
-    const tid = setTimeout(() => {
-      ns.forEach((n) => { n.fx = null; n.fy = null; });
-      sim.alpha(0.5).restart();
-    }, 1000);
-    return () => clearTimeout(tid);
-  }, [groupSignal]);
 
   // Continent label arc paths around the perimeter.
   const labelArcs = useMemo(() => {
