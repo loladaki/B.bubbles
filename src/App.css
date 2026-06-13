@@ -112,13 +112,17 @@ html, body, #root {
 
 .bubbles-wrap {
   position: relative;
-  width: 100%;
+  /* Full-bleed: break out of the centered .app container to the full viewport
+     width so bubbles can be pushed edge to edge. */
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  height: 72vh;
+  min-height: 480px;
   background: radial-gradient(ellipse at center, rgba(255,111,160,0.08), transparent 70%);
-  border-radius: 16px;
 }
 .bubbles-wrap svg {
   width: 100%;
-  height: auto;
+  height: 100%;
   display: block;
 }
 

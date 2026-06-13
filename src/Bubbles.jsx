@@ -1,9 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { COUNTRIES, interpolate } from './data/countries.js';
 
-const WIDTH = 1000;
-const HEIGHT = 700;
 const PAD = 6;
 const MIN_R = 16;
 const MAX_R = 104;
@@ -44,12 +42,45 @@ function bubbleOutline(node, neighbours) {
 }
 
 export default function Bubbles({ year, metric, cursorFidget }) {
+  const wrapRef = useRef(null);
   const svgRef = useRef(null);
   const simRef = useRef(null);
   const pointerRef = useRef({ x: null, y: null, active: false });
+  const dimsRef = useRef({ w: 1200, h: 600 });
   const fidgetRef = useRef(cursorFidget);
   fidgetRef.current = cursorFidget;
+  const [viewBox, setViewBox] = useState('0 0 1200 600');
   const [hovered, setHovered] = useState(null);
+
+  // Measure the wrapper and keep the SVG coordinate space equal to its real
+  // pixel size, so bubbles can travel the full width edge to edge.
+  useLayoutEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const update = () => {
+      const w = Math.round(el.clientWidth);
+      const h = Math.round(el.clientHeight);
+      if (w < 100 || h < 100) return; // ignore pre-layout zero sizes
+      const cur = dimsRef.current;
+      if (cur.w === w && cur.h === h) return;
+      dimsRef.current = { w, h };
+      setViewBox(`0 0 ${w} ${h}`);
+      if (simRef.current) simRef.current.alpha(0.3).restart();
+    };
+    update();
+    // Catch late layout over the next few frames.
+    const r1 = requestAnimationFrame(update);
+    const r2 = requestAnimationFrame(() => requestAnimationFrame(update));
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    window.addEventListener('resize', update);
+    return () => {
+      cancelAnimationFrame(r1);
+      cancelAnimationFrame(r2);
+      ro.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, []);
 
   const nodes = useMemo(() => {
     const values = COUNTRIES.map((c) => interpolate(c[metric], year));
@@ -69,18 +100,20 @@ export default function Bubbles({ year, metric, cursorFidget }) {
     const merged = nodes.map((n) => {
       const prev = existing.find((e) => e.code === n.code);
       if (prev) return { ...prev, ...n };
+      const { w, h } = dimsRef.current;
       return {
         ...n,
-        x: WIDTH / 2 + (Math.random() - 0.5) * 280,
-        y: HEIGHT / 2 + (Math.random() - 0.5) * 200,
+        x: w / 2 + (Math.random() - 0.5) * Math.min(w * 0.6, 400),
+        y: h / 2 + (Math.random() - 0.5) * Math.min(h * 0.6, 280),
       };
     });
 
     if (!simRef.current) {
       simRef.current = d3.forceSimulation(merged)
-        // Pack them together so they actually touch.
-        .force('x', d3.forceX(WIDTH / 2).strength(0.06))
-        .force('y', d3.forceY(HEIGHT / 2).strength(0.07))
+        // Weak horizontal pull + stronger vertical pull spreads the cluster
+        // across the full (wide) width instead of clumping in a square.
+        .force('x', d3.forceX(() => dimsRef.current.w / 2).strength(0.012))
+        .force('y', d3.forceY(() => dimsRef.current.h / 2).strength(0.12))
         // Slight overlap -> visible flattening at contacts.
         .force('collide', d3.forceCollide()
           .radius((d) => d.r - 5)
@@ -105,9 +138,10 @@ export default function Bubbles({ year, metric, cursorFidget }) {
         })
         .force('bound', () => {
           const ns = simRef.current.nodes();
+          const { w, h } = dimsRef.current;
           for (const n of ns) {
-            const minX = PAD + n.r, maxX = WIDTH - PAD - n.r;
-            const minY = PAD + n.r, maxY = HEIGHT - PAD - n.r;
+            const minX = PAD + n.r, maxX = w - PAD - n.r;
+            const minY = PAD + n.r, maxY = h - PAD - n.r;
             if (n.x < minX) { n.x = minX; n.vx *= -0.4; }
             if (n.x > maxX) { n.x = maxX; n.vx *= -0.4; }
             if (n.y < minY) { n.y = minY; n.vy *= -0.4; }
@@ -238,8 +272,8 @@ export default function Bubbles({ year, metric, cursorFidget }) {
   }, [nodes, metric]);
 
   return (
-    <div className="bubbles-wrap">
-      <svg ref={svgRef} viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="xMidYMid meet">
+    <div className="bubbles-wrap" ref={wrapRef}>
+      <svg ref={svgRef} viewBox={viewBox} preserveAspectRatio="xMidYMid meet">
         <defs>
           {COUNTRIES.map((c) => (
             <pattern
