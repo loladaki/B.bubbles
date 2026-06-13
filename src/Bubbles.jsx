@@ -37,10 +37,11 @@ export default function Bubbles({ year, metric }) {
 
     if (!simRef.current) {
       simRef.current = d3.forceSimulation(merged)
-        .force('center', d3.forceCenter(WIDTH / 2, HEIGHT / 2).strength(0.04))
-        .force('charge', d3.forceManyBody().strength(2))
-        .force('collide', d3.forceCollide().radius((d) => d.r + 1.5).iterations(3))
-        .alphaDecay(0.02);
+        .force('x', d3.forceX(WIDTH / 2).strength(0.08))
+        .force('y', d3.forceY(HEIGHT / 2).strength(0.08))
+        .force('collide', d3.forceCollide().radius((d) => d.r + 1.5).iterations(4))
+        .alphaDecay(0.015)
+        .velocityDecay(0.3);
     } else {
       simRef.current.nodes(merged);
       simRef.current.force('collide').radius((d) => d.r + 1.5);
@@ -106,6 +107,8 @@ export default function Bubbles({ year, metric }) {
       .on('end', (event, d) => {
         if (!event.active) sim.alphaTarget(0);
         d.fx = null; d.fy = null;
+        // Re-heat so the cluster snaps back together after a drag.
+        sim.alpha(0.5).restart();
       });
     join.call(drag);
 
