@@ -7,7 +7,38 @@ const HEIGHT = 700;
 const PAD = 6;
 const MIN_R = 16;
 const MAX_R = 104;
-const GAP = 5; // clear space between balls so each stays distinct
+const SAMPLES = 44; // outline resolution per bubble
+
+const closedCurve = d3.line().curve(d3.curveCatmullRomClosed.alpha(0.6));
+
+// Build a soap-bubble outline: a circle flattened against nearby neighbours
+// using the radical (power-diagram) plane, so bubbles share a soft flat edge
+// where they touch and stay round where they're free.
+function bubbleOutline(node, neighbours) {
+  const pts = new Array(SAMPLES);
+  for (let a = 0; a < SAMPLES; a++) {
+    const th = (a / SAMPLES) * Math.PI * 2;
+    let px = node.x + node.r * Math.cos(th);
+    let py = node.y + node.r * Math.sin(th);
+    for (let k = 0; k < neighbours.length; k++) {
+      const nb = neighbours[k];
+      const dx = nb.x - node.x;
+      const dy = nb.y - node.y;
+      const D = Math.sqrt(dx * dx + dy * dy) || 1e-6;
+      const nx = dx / D;
+      const ny = dy / D;
+      // Distance from this node's centre to the shared contact plane.
+      const t = (D * D + node.r * node.r - nb.r * nb.r) / (2 * D);
+      const proj = (px - node.x) * nx + (py - node.y) * ny;
+      if (proj > t) {
+        px -= (proj - t) * nx;
+        py -= (proj - t) * ny;
+      }
+    }
+    pts[a] = [px, py];
+  }
+  return closedCurve(pts);
+}
 
 export default function Bubbles({ year, metric, cursorFidget }) {
   const svgRef = useRef(null);
@@ -37,19 +68,20 @@ export default function Bubbles({ year, metric, cursorFidget }) {
       if (prev) return { ...prev, ...n };
       return {
         ...n,
-        x: WIDTH / 2 + (Math.random() - 0.5) * 300,
-        y: HEIGHT / 2 + (Math.random() - 0.5) * 220,
+        x: WIDTH / 2 + (Math.random() - 0.5) * 280,
+        y: HEIGHT / 2 + (Math.random() - 0.5) * 200,
       };
     });
 
     if (!simRef.current) {
       simRef.current = d3.forceSimulation(merged)
-        .force('x', d3.forceX(WIDTH / 2).strength(0.04))
-        .force('y', d3.forceY(HEIGHT / 2).strength(0.05))
-        // Keep a clear gap between balls — no jumbled mass.
+        // Pack them together so they actually touch.
+        .force('x', d3.forceX(WIDTH / 2).strength(0.06))
+        .force('y', d3.forceY(HEIGHT / 2).strength(0.07))
+        // Slight overlap -> visible flattening at contacts.
         .force('collide', d3.forceCollide()
-          .radius((d) => d.r + GAP)
-          .strength(0.9)
+          .radius((d) => d.r - 5)
+          .strength(0.85)
           .iterations(4))
         .force('pointer', (alpha) => {
           if (!fidgetRef.current) return;
@@ -85,46 +117,40 @@ export default function Bubbles({ year, metric, cursorFidget }) {
       simRef.current.alphaTarget(0.01);
     } else {
       simRef.current.nodes(merged);
-      simRef.current.force('collide').radius((d) => d.r + GAP);
+      simRef.current.force('collide').radius((d) => d.r - 5);
       simRef.current.alpha(0.5).restart();
     }
 
     const sim = simRef.current;
 
-    // Each ball is a <g> (so we can squash it) holding a flag-filled circle.
-    const ballsG = svg.select('g.balls');
-    const bJoin = ballsG.selectAll('g.ball')
+    // One flexible flag-filled bubble per country.
+    const bubblesG = svg.select('g.bubbles');
+    const bJoin = bubblesG.selectAll('path.bubble')
       .data(merged, (d) => d.code)
-      .join((enter) => {
-        const g = enter.append('g').attr('class', 'ball').style('cursor', 'grab');
-        g.append('circle')
-          .attr('class', 'flag')
-          .attr('r', (d) => d.r)
+      .join((enter) =>
+        enter.append('path')
+          .attr('class', 'bubble')
+          .style('cursor', 'grab')
           .attr('fill', (d) => `url(#flag-${d.code})`)
-          .attr('stroke', 'rgba(255,255,255,0.22)')
-          .attr('stroke-width', 1.5);
-        // Soft top-left sheen for a subtle soap-bubble feel.
-        g.append('ellipse')
-          .attr('class', 'sheen')
-          .attr('fill', 'rgba(255,255,255,0.28)')
-          .attr('pointer-events', 'none');
-        return g;
-      });
-
-    bJoin.select('circle.flag')
-      .transition().duration(500)
-      .attr('r', (d) => d.r);
-    bJoin.select('ellipse.sheen')
-      .attr('cx', (d) => -d.r * 0.3)
-      .attr('cy', (d) => -d.r * 0.4)
-      .attr('rx', (d) => d.r * 0.32)
-      .attr('ry', (d) => d.r * 0.2)
-      .attr('transform', (d) => `rotate(-28 ${-d.r * 0.3} ${-d.r * 0.4})`);
+          .attr('stroke', 'rgba(255,255,255,0.2)')
+          .attr('stroke-width', 1.2)
+      );
 
     bJoin.on('mouseenter', (_, d) => setHovered(d))
          .on('mouseleave', () => setHovered(null));
 
-    // Labels on a separate, unsquashed layer so they stay crisp.
+    // Soft sheen highlights (separate layer, on top).
+    const sheenG = svg.select('g.sheen');
+    const sJoin = sheenG.selectAll('ellipse.sheen')
+      .data(merged, (d) => d.code)
+      .join((enter) =>
+        enter.append('ellipse')
+          .attr('class', 'sheen')
+          .attr('fill', 'rgba(255,255,255,0.25)')
+          .attr('pointer-events', 'none')
+      );
+
+    // Labels on top, crisp.
     const labelsG = svg.select('g.labels');
     const lJoin = labelsG.selectAll('text.code-label')
       .data(merged, (d) => d.code)
@@ -167,17 +193,25 @@ export default function Bubbles({ year, metric, cursorFidget }) {
     bJoin.call(drag);
 
     const render = () => {
-      const t = performance.now();
-      bJoin.attr('transform', (d, i) => {
-        const speed = Math.sqrt((d.vx || 0) ** 2 + (d.vy || 0) ** 2);
-        // Subtle directional squash (jelly), upright (no net rotation).
-        const k = Math.min(0.14, speed * 0.009);
-        const ang = (Math.atan2(d.vy || 0, d.vx || 0) * 180) / Math.PI;
-        const breath = 1 + 0.012 * Math.sin(t / 720 + i * 0.6);
-        const sx = (1 + k) * breath;
-        const sy = (1 - k) * breath;
-        return `translate(${d.x},${d.y}) rotate(${ang}) scale(${sx.toFixed(3)},${sy.toFixed(3)}) rotate(${-ang})`;
-      });
+      // Precompute neighbour lists (only nearby bubbles can deform a bubble).
+      for (let i = 0; i < merged.length; i++) {
+        const a = merged[i];
+        const nbs = [];
+        for (let j = 0; j < merged.length; j++) {
+          if (i === j) continue;
+          const b = merged[j];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          if (dx * dx + dy * dy < (a.r + b.r) ** 2) nbs.push(b);
+        }
+        a._nbs = nbs;
+      }
+      bJoin.attr('d', (d) => bubbleOutline(d, d._nbs));
+      sJoin
+        .attr('cx', (d) => d.x - d.r * 0.3)
+        .attr('cy', (d) => d.y - d.r * 0.4)
+        .attr('rx', (d) => d.r * 0.3)
+        .attr('ry', (d) => d.r * 0.18)
+        .attr('transform', (d) => `rotate(-28 ${d.x - d.r * 0.3} ${d.y - d.r * 0.4})`);
       lJoin.attr('x', (d) => d.x).attr('y', (d) => d.y);
     };
     sim.on('tick', render);
@@ -213,7 +247,8 @@ export default function Bubbles({ year, metric, cursorFidget }) {
           ))}
         </defs>
 
-        <g className="balls" />
+        <g className="bubbles" />
+        <g className="sheen" />
         <g className="labels" />
       </svg>
 
