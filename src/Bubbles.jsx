@@ -47,6 +47,7 @@ export default function Bubbles({ year, metric, cursorFidget }) {
   const simRef = useRef(null);
   const pointerRef = useRef({ x: null, y: null, active: false });
   const dimsRef = useRef({ w: 1200, h: 600 });
+  const hoveredCodeRef = useRef(null);
   const fidgetRef = useRef(cursorFidget);
   fidgetRef.current = cursorFidget;
   const [viewBox, setViewBox] = useState('0 0 1200 600');
@@ -181,14 +182,23 @@ export default function Bubbles({ year, metric, cursorFidget }) {
           .attr('fill', (d) => `url(#flag-${d.code})`)
       );
 
-    // Trend ring: green = growing, red = shrinking, intensity = how fast.
+    // Trend ring: subtle green = growing, red = shrinking. Stable countries
+    // keep only a faint white edge; the colour barely whispers the direction.
     bJoin
-      .attr('stroke', (d) => (d.trend >= 0 ? '#3df08a' : '#ff4d6d'))
-      .attr('stroke-opacity', (d) => Math.min(0.95, 0.1 + Math.abs(d.trend) * 4.5))
-      .attr('stroke-width', (d) => 1 + Math.min(5, Math.abs(d.trend) * 22));
+      .attr('stroke', (d) => {
+        if (Math.abs(d.trend) < 0.03) return 'rgba(255,255,255,0.16)';
+        return d.trend >= 0 ? '#3df08a' : '#ff4d6d';
+      })
+      .attr('stroke-opacity', (d) => {
+        const a = Math.abs(d.trend);
+        if (a < 0.03) return 0.16;
+        return Math.min(0.45, 0.12 + a * 1.6);
+      })
+      .attr('stroke-width', (d) => 0.8 + Math.min(1.4, Math.abs(d.trend) * 7));
 
-    bJoin.on('mouseenter', (_, d) => setHovered(d))
-         .on('mouseleave', () => setHovered(null));
+    bJoin
+      .on('mouseenter', (_, d) => { setHovered(d); hoveredCodeRef.current = d.code; render(); })
+      .on('mouseleave', () => { setHovered(null); hoveredCodeRef.current = null; render(); });
 
     // Soft sheen highlights (separate layer, on top).
     const sheenG = svg.select('g.sheen');
@@ -219,9 +229,8 @@ export default function Bubbles({ year, metric, cursorFidget }) {
           .attr('stroke-width', 3.5)
           .attr('stroke-linejoin', 'round')
       );
-    lJoin
-      .attr('font-size', (d) => Math.max(9, Math.min(18, d.r / 2.6)))
-      .text((d) => (d.r > 20 ? d.code : ''));
+    // Font size only here; the text itself is shown on hover (see render()).
+    lJoin.attr('font-size', (d) => Math.max(11, Math.min(20, d.r / 2.4)));
 
     const drag = d3.drag()
       .on('start', (event, d) => {
@@ -263,7 +272,11 @@ export default function Bubbles({ year, metric, cursorFidget }) {
         .attr('rx', (d) => d.r * 0.3)
         .attr('ry', (d) => d.r * 0.18)
         .attr('transform', (d) => `rotate(-28 ${d.x - d.r * 0.3} ${d.y - d.r * 0.4})`);
-      lJoin.attr('x', (d) => d.x).attr('y', (d) => d.y);
+      // Country code shows only for the hovered bubble.
+      lJoin
+        .attr('x', (d) => d.x)
+        .attr('y', (d) => d.y)
+        .text((d) => (d.code === hoveredCodeRef.current ? d.code : ''));
     };
     sim.on('tick', render);
     render();
