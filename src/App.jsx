@@ -5,7 +5,9 @@ import './App.css';
 
 export default function App() {
   const [year, setYear] = useState(2025);
-  const [metric, setMetric] = useState('births'); // 'births' | 'pop'
+  const [metric, setMetric] = useState('births');         // 'births' | 'pop'
+  const [groupByContinent, setGroupByContinent] = useState(true);
+  const [cursorFidget, setCursorFidget] = useState(false);
 
   const totals = COUNTRIES.reduce((acc, c) => {
     const v = interpolate(c[metric], year);
@@ -17,12 +19,10 @@ export default function App() {
   return (
     <div className="app">
       <header className="header">
-        <h1>
-          <span className="dot">●</span> B.bubbles
-        </h1>
+        <h1><span className="dot">●</span> B.bubbles</h1>
         <p className="tagline">
           The world's {metric === 'births' ? 'births' : 'population'} in <strong>{year}</strong>, as living bubbles.
-          Drag them around. Slide through time.
+          Drag them. Throw them. Slide through time.
         </p>
       </header>
 
@@ -30,25 +30,32 @@ export default function App() {
         <div className="control-group">
           <label>Metric</label>
           <div className="toggle">
-            <button
-              className={metric === 'births' ? 'on' : ''}
-              onClick={() => setMetric('births')}
-            >Births / year</button>
-            <button
-              className={metric === 'pop' ? 'on' : ''}
-              onClick={() => setMetric('pop')}
-            >Population</button>
+            <button className={metric === 'births' ? 'on' : ''} onClick={() => setMetric('births')}>Births / year</button>
+            <button className={metric === 'pop' ? 'on' : ''} onClick={() => setMetric('pop')}>Population</button>
           </div>
         </div>
+
+        <div className="control-group">
+          <label>Layout</label>
+          <div className="toggle">
+            <button className={groupByContinent ? 'on' : ''} onClick={() => setGroupByContinent(true)}>By continent</button>
+            <button className={!groupByContinent ? 'on' : ''} onClick={() => setGroupByContinent(false)}>Free</button>
+          </div>
+        </div>
+
+        <div className="control-group">
+          <label>Cursor fidget</label>
+          <div className="toggle">
+            <button className={!cursorFidget ? 'on' : ''} onClick={() => setCursorFidget(false)}>Off</button>
+            <button className={cursorFidget ? 'on' : ''} onClick={() => setCursorFidget(true)}>On</button>
+          </div>
+        </div>
+
         <div className="control-group year-group">
           <label>Year <strong>{year}</strong></label>
           <input
-            type="range"
-            min={2025}
-            max={2050}
-            step={1}
-            value={year}
-            onChange={(e) => setYear(+e.target.value)}
+            type="range" min={2025} max={2050} step={1}
+            value={year} onChange={(e) => setYear(+e.target.value)}
           />
           <div className="year-ticks">
             <span>2025</span><span>2030</span><span>2040</span><span>2050</span>
@@ -56,7 +63,12 @@ export default function App() {
         </div>
       </div>
 
-      <Bubbles year={year} metric={metric} />
+      <Bubbles
+        year={year}
+        metric={metric}
+        groupByContinent={groupByContinent}
+        cursorFidget={cursorFidget}
+      />
 
       <div className="legend">
         {Object.entries(CONTINENTS).map(([name, { color }]) => (
