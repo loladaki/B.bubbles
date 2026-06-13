@@ -4,7 +4,7 @@ import { COUNTRIES, CONTINENTS, interpolate } from './data/countries.js';
 
 const WIDTH = 1000;
 const HEIGHT = 700;
-const MIN_R = 6;
+const MIN_R = 8;
 const MAX_R = 110;
 
 export default function Bubbles({ year, metric }) {
@@ -12,7 +12,6 @@ export default function Bubbles({ year, metric }) {
   const simRef = useRef(null);
   const [hovered, setHovered] = useState(null);
 
-  // Build node data for this year/metric.
   const nodes = useMemo(() => {
     const values = COUNTRIES.map((c) => interpolate(c[metric], year));
     const max = Math.max(...values);
@@ -24,11 +23,9 @@ export default function Bubbles({ year, metric }) {
     }));
   }, [year, metric]);
 
-  // Initialize / restart the simulation when nodes change.
   useEffect(() => {
     const svg = d3.select(svgRef.current);
 
-    // Merge with existing node positions so bubbles stay put and just resize.
     const existing = simRef.current ? simRef.current.nodes() : [];
     const merged = nodes.map((n) => {
       const prev = existing.find((e) => e.code === n.code);
@@ -53,49 +50,41 @@ export default function Bubbles({ year, metric }) {
 
     const join = g.selectAll('g.bubble')
       .data(merged, (d) => d.code)
-      .join(
-        (enter) => {
-          const node = enter.append('g').attr('class', 'bubble').style('cursor', 'grab');
-          node.append('circle')
-            .attr('fill', (d) => CONTINENTS[d.continent].color)
-            .attr('fill-opacity', 0.85)
-            .attr('stroke', '#1a0510')
-            .attr('stroke-width', 1.5);
-          node.append('text')
-            .attr('text-anchor', 'middle')
-            .attr('dy', '-0.2em')
-            .attr('fill', '#fff')
-            .attr('font-weight', 700)
-            .attr('pointer-events', 'none')
-            .attr('font-family', 'system-ui, sans-serif');
-          node.append('text')
-            .attr('class', 'value')
-            .attr('text-anchor', 'middle')
-            .attr('dy', '1.1em')
-            .attr('fill', '#fff')
-            .attr('fill-opacity', 0.85)
-            .attr('font-size', 11)
-            .attr('pointer-events', 'none')
-            .attr('font-family', 'system-ui, sans-serif');
-          return node;
-        }
-      );
+      .join((enter) => {
+        const node = enter.append('g').attr('class', 'bubble').style('cursor', 'grab');
+        // Flag-filled circle.
+        node.append('circle')
+          .attr('class', 'flag-circle')
+          .attr('fill', (d) => `url(#flag-${d.code})`)
+          .attr('stroke', (d) => CONTINENTS[d.continent].color)
+          .attr('stroke-width', 3);
+        // Country code label, only on bubbles big enough.
+        node.append('text')
+          .attr('class', 'code-label')
+          .attr('text-anchor', 'middle')
+          .attr('dy', '0.35em')
+          .attr('fill', '#fff')
+          .attr('font-weight', 800)
+          .attr('pointer-events', 'none')
+          .attr('font-family', 'system-ui, sans-serif')
+          .attr('paint-order', 'stroke')
+          .attr('stroke', 'rgba(0,0,0,0.7)')
+          .attr('stroke-width', 3)
+          .attr('stroke-linejoin', 'round');
+        return node;
+      });
 
-    join.select('circle')
+    join.select('circle.flag-circle')
       .transition().duration(600)
       .attr('r', (d) => d.r);
 
-    join.select('text:not(.value)')
-      .attr('font-size', (d) => Math.max(9, Math.min(18, d.r / 3)))
-      .text((d) => (d.r > 22 ? d.name : d.r > 14 ? d.code : ''));
-
-    join.select('text.value')
-      .text((d) => (d.r > 28 ? formatValue(d.value, metric) : ''));
+    join.select('text.code-label')
+      .attr('font-size', (d) => Math.max(10, Math.min(20, d.r / 2.8)))
+      .text((d) => (d.r > 26 ? d.code : ''));
 
     join.on('mouseenter', (_, d) => setHovered(d))
         .on('mouseleave', () => setHovered(null));
 
-    // Drag behavior.
     const drag = d3.drag()
       .on('start', (event, d) => {
         if (!event.active) sim.alphaTarget(0.3).restart();
@@ -107,7 +96,6 @@ export default function Bubbles({ year, metric }) {
       .on('end', (event, d) => {
         if (!event.active) sim.alphaTarget(0);
         d.fx = null; d.fy = null;
-        // Re-heat so the cluster snaps back together after a drag.
         sim.alpha(0.5).restart();
       });
     join.call(drag);
@@ -120,6 +108,24 @@ export default function Bubbles({ year, metric }) {
   return (
     <div className="bubbles-wrap">
       <svg ref={svgRef} viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="xMidYMid meet">
+        <defs>
+          {COUNTRIES.map((c) => (
+            <pattern
+              key={c.code}
+              id={`flag-${c.code}`}
+              patternContentUnits="objectBoundingBox"
+              width="1"
+              height="1"
+            >
+              <image
+                href={`https://flagcdn.com/w320/${c.iso2}.png`}
+                width="1"
+                height="1"
+                preserveAspectRatio="xMidYMid slice"
+              />
+            </pattern>
+          ))}
+        </defs>
         <g className="bubbles" />
       </svg>
       {hovered && (
