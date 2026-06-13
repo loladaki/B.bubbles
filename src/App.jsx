@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Bubbles from './Bubbles.jsx';
-import { CONTINENTS, COUNTRIES, interpolate } from './data/countries.js';
+import { CONTINENTS, COUNTRIES, YEARS, interpolate } from './data/countries.js';
 import './App.css';
+
+const END_YEAR = YEARS[YEARS.length - 1];
 
 export default function App() {
   const [year, setYear] = useState(2025);
@@ -15,13 +17,25 @@ export default function App() {
     return acc;
   }, { world: 0, byContinent: {} });
 
+  // Biggest absolute movers from the selected year to 2050.
+  const movers = useMemo(() => {
+    const rows = COUNTRIES.map((c) => {
+      const now = interpolate(c[metric], year);
+      const fut = interpolate(c[metric], END_YEAR);
+      return { code: c.code, flag: c.flag, name: c.name, delta: fut - now };
+    });
+    const growing = [...rows].sort((a, b) => b.delta - a.delta).slice(0, 4);
+    const shrinking = [...rows].sort((a, b) => a.delta - b.delta).slice(0, 4);
+    return { growing, shrinking };
+  }, [metric, year]);
+
   return (
     <div className="app">
       <header className="header">
         <h1><span className="dot">●</span> B.bubbles</h1>
         <p className="tagline">
           The world's {metric === 'births' ? 'births' : 'population'} in <strong>{year}</strong>, as soap-bubble countries.
-          Drag them. Throw them. Watch them merge.
+          Drag them, throw them, and scrub through time to {END_YEAR}.
         </p>
       </header>
 
@@ -45,14 +59,36 @@ export default function App() {
         <div className="control-group year-group">
           <label>Year <strong>{year}</strong></label>
           <input
-            type="range" min={2025} max={2050} step={1}
+            type="range" min={YEARS[0]} max={END_YEAR} step={1}
             value={year} onChange={(e) => setYear(+e.target.value)}
           />
           <div className="year-ticks">
-            <span>2025</span><span>2030</span><span>2040</span><span>2050</span>
+            <span>1990</span><span>2005</span><span>2020</span><span>2035</span><span>2050</span>
           </div>
         </div>
       </div>
+
+      {year < END_YEAR && (
+        <div className="movers">
+          <span className="movers-head">By {END_YEAR}</span>
+          <div className="movers-group grow">
+            <span className="movers-label">▲ Growing</span>
+            {movers.growing.map((m) => (
+              <span key={m.code} className="mover" title={m.name}>
+                {m.flag} {m.code} <b>+{formatDelta(m.delta, metric)}</b>
+              </span>
+            ))}
+          </div>
+          <div className="movers-group shrink">
+            <span className="movers-label">▼ Shrinking</span>
+            {movers.shrinking.map((m) => (
+              <span key={m.code} className="mover" title={m.name}>
+                {m.flag} {m.code} <b>{formatDelta(m.delta, metric)}</b>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <Bubbles
         year={year}
@@ -84,8 +120,18 @@ export default function App() {
             : `${totals.world.toFixed(1)}M`}
         </strong>
         {' · '}
-        <span>Top ~28 countries · Source: UN WPP 2024 (approx.)</span>
+        <span>120 countries · Source: UN World Population Prospects 2024 (medium variant)</span>
       </footer>
     </div>
   );
+}
+
+function formatDelta(v, metric) {
+  const sign = v < 0 ? '-' : '';
+  const a = Math.abs(v);
+  if (metric === 'pop') {
+    if (a >= 1000) return `${sign}${(a / 1000).toFixed(2)}B`;
+    return `${sign}${a.toFixed(0)}M`;
+  }
+  return `${sign}${a.toFixed(1)}M`;
 }

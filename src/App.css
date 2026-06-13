@@ -116,8 +116,8 @@ html, body, #root {
      width so bubbles can be pushed edge to edge. */
   width: 100vw;
   margin-left: calc(50% - 50vw);
-  height: 86vh;
-  min-height: 660px;
+  height: 70vh;
+  min-height: 540px;
   background: radial-gradient(ellipse at center, rgba(255,111,160,0.08), transparent 70%);
 }
 .bubbles-wrap svg {
@@ -145,6 +145,35 @@ html, body, #root {
 .tt-meta { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
 .tt-value { font-size: 18px; font-weight: 800; color: var(--pink); margin-top: 4px; }
 .tt-unit { font-size: 11px; color: var(--muted); font-weight: 500; }
+.tt-trend { font-size: 11px; font-weight: 700; margin-top: 3px; letter-spacing: 0.04em; }
+
+.movers {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding: 10px 16px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 10px;
+  font-size: 13px;
+}
+.movers-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  font-weight: 700;
+}
+.movers-group { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.movers-label { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; }
+.movers-group.grow .movers-label { color: #3df08a; }
+.movers-group.shrink .movers-label { color: #ff4d6d; }
+.mover { color: var(--text); font-variant-numeric: tabular-nums; }
+.mover b { font-weight: 700; }
+.movers-group.grow .mover b { color: #3df08a; }
+.movers-group.shrink .mover b { color: #ff4d6d; }
 
 .legend {
   display: flex;

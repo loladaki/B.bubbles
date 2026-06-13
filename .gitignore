@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Raw data downloads consumed by scripts/build-data.mjs (re-fetch as needed)
+births_raw.csv
+pop_raw.csv
+iso3166.json
+wb_countries.json
+restcountries.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

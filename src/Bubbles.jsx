@@ -1,12 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import { COUNTRIES, interpolate } from './data/countries.js';
+import { COUNTRIES, YEARS, interpolate } from './data/countries.js';
 
 const PAD = 6;
-const MIN_R = 16;
-const MAX_R = 104;
-const SAMPLES = 44; // outline resolution per bubble
-const INSET = 3;    // subtle uniform gap (thin soap-foam membrane) between bubbles
+const MIN_R = 8;
+const MAX_R = 94;
+const SAMPLES = 40; // outline resolution per bubble
+const INSET = 2.5;  // subtle uniform gap (thin soap-foam membrane) between bubbles
 
 const closedCurve = d3.line().curve(d3.curveCatmullRomClosed.alpha(0.6));
 
@@ -82,16 +82,24 @@ export default function Bubbles({ year, metric, cursorFidget }) {
     };
   }, []);
 
+  // Fixed scale across ALL years so sizes reflect absolute values over time:
+  // as births fall or populations grow, bubbles actually shrink/swell.
+  const rScale = useMemo(() => {
+    let max = 0;
+    for (const c of COUNTRIES) for (const v of c[metric]) if (v > max) max = v;
+    return d3.scaleSqrt().domain([0, max]).range([MIN_R, MAX_R]);
+  }, [metric]);
+
   const nodes = useMemo(() => {
-    const values = COUNTRIES.map((c) => interpolate(c[metric], year));
-    const max = Math.max(...values);
-    const rScale = d3.scaleSqrt().domain([0, max]).range([MIN_R, MAX_R]);
-    return COUNTRIES.map((c, i) => ({
-      ...c,
-      value: values[i],
-      r: rScale(values[i]),
-    }));
-  }, [year, metric]);
+    return COUNTRIES.map((c) => {
+      const value = interpolate(c[metric], year);
+      // Local trend: how fast this country is growing/shrinking right now.
+      const ahead = interpolate(c[metric], Math.min(YEARS[YEARS.length - 1], year + 3));
+      const behind = interpolate(c[metric], Math.max(YEARS[0], year - 3));
+      const trend = value > 0 ? (ahead - behind) / value : 0; // fractional change / ~6yr
+      return { ...c, value, r: rScale(value), trend };
+    });
+  }, [year, metric, rScale]);
 
   useEffect(() => {
     const svg = d3.select(svgRef.current);
@@ -110,10 +118,10 @@ export default function Bubbles({ year, metric, cursorFidget }) {
 
     if (!simRef.current) {
       simRef.current = d3.forceSimulation(merged)
-        // Gentle, balanced pull so bubbles form a full 2D cluster that uses
-        // both width and height (not a flat line) — leaves room for many more.
-        .force('x', d3.forceX(() => dimsRef.current.w / 2).strength(0.015))
-        .force('y', d3.forceY(() => dimsRef.current.h / 2).strength(0.03))
+        // Gentle, balanced pull so bubbles form a centered 2D cluster that
+        // uses both width and height (not a flat line).
+        .force('x', d3.forceX(() => dimsRef.current.w / 2).strength(0.03))
+        .force('y', d3.forceY(() => dimsRef.current.h / 2).strength(0.05))
         // Slight overlap -> visible flattening at contacts.
         .force('collide', d3.forceCollide()
           .radius((d) => d.r - 5)
@@ -171,9 +179,13 @@ export default function Bubbles({ year, metric, cursorFidget }) {
           .attr('class', 'bubble')
           .style('cursor', 'grab')
           .attr('fill', (d) => `url(#flag-${d.code})`)
-          .attr('stroke', 'rgba(255,255,255,0.2)')
-          .attr('stroke-width', 1.2)
       );
+
+    // Trend ring: green = growing, red = shrinking, intensity = how fast.
+    bJoin
+      .attr('stroke', (d) => (d.trend >= 0 ? '#3df08a' : '#ff4d6d'))
+      .attr('stroke-opacity', (d) => Math.min(0.95, 0.1 + Math.abs(d.trend) * 4.5))
+      .attr('stroke-width', (d) => 1 + Math.min(5, Math.abs(d.trend) * 22));
 
     bJoin.on('mouseenter', (_, d) => setHovered(d))
          .on('mouseleave', () => setHovered(null));
@@ -208,8 +220,8 @@ export default function Bubbles({ year, metric, cursorFidget }) {
           .attr('stroke-linejoin', 'round')
       );
     lJoin
-      .attr('font-size', (d) => Math.max(11, Math.min(20, d.r / 2.6)))
-      .text((d) => (d.r > 26 ? d.code : ''));
+      .attr('font-size', (d) => Math.max(9, Math.min(18, d.r / 2.6)))
+      .text((d) => (d.r > 20 ? d.code : ''));
 
     const drag = d3.drag()
       .on('start', (event, d) => {
@@ -305,6 +317,9 @@ export default function Bubbles({ year, metric, cursorFidget }) {
             <div className="tt-value">
               {formatValue(hovered.value, metric)}{' '}
               <span className="tt-unit">{metric === 'births' ? 'births/yr' : 'people'}</span>
+            </div>
+            <div className="tt-trend" style={{ color: hovered.trend >= 0 ? '#3df08a' : '#ff4d6d' }}>
+              {hovered.trend >= 0 ? '▲ growing' : '▼ shrinking'}
             </div>
           </div>
         </div>
