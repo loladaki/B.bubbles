@@ -132,6 +132,10 @@ export default function Bubbles({ year, metric, cursorFidget, playing }) {
         ? Math.max(0.35, Math.min(1.6, Math.sqrt((FILL * short * short) / baseArea)))
         : 1;
       for (const n of nodes) n.r = n.r0 * k;
+      // d3.forceCollide caches each radius when it initialises. Re-setting the
+      // radius accessor forces it to recompute — without this it keeps the
+      // tiny seed radii and never pushes the big bubbles apart.
+      if (simRef.current) simRef.current.force('collide').radius((d) => d.r * 0.93);
     };
     relayoutRef.current = relayout;
 
