@@ -99,12 +99,21 @@ export default function Bubbles({ year, metric, cursorFidget, playing }) {
     const { w, h } = dimsRef.current;
 
     // Persistent node objects (positions survive year/metric changes).
-    const nodes = COUNTRIES.map((c) => ({
-      ...c,
-      x: w / 2 + (Math.random() - 0.5) * Math.min(w * 0.6, 400),
-      y: h / 2 + (Math.random() - 0.5) * Math.min(h * 0.6, 280),
-      value: 0, r0: MIN_R, r: MIN_R, trend: 0,
-    }));
+    // Seed on a phyllotaxis (sunflower) spiral so they start spread out — a
+    // tight random clump can't separate cleanly within one settle.
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    const spread = Math.min(w, h) * 0.45;
+    const nodes = COUNTRIES.map((c, i) => {
+      const t = (i + 0.5) / COUNTRIES.length;
+      const rr = Math.sqrt(t) * spread;
+      const ang = i * golden;
+      return {
+        ...c,
+        x: w / 2 + rr * Math.cos(ang),
+        y: h / 2 + rr * Math.sin(ang),
+        value: 0, r0: MIN_R, r: MIN_R, trend: 0,
+      };
+    });
     nodesRef.current = nodes;
 
     const scaleCache = {};
@@ -129,7 +138,7 @@ export default function Bubbles({ year, metric, cursorFidget, playing }) {
     const sim = d3.forceSimulation(nodes)
       .force('x', d3.forceX(() => dimsRef.current.w / 2).strength(0.03))
       .force('y', d3.forceY(() => dimsRef.current.h / 2).strength(0.05))
-      .force('collide', d3.forceCollide().radius((d) => d.r * 0.93).strength(0.85).iterations(3))
+      .force('collide', d3.forceCollide().radius((d) => d.r * 0.93).strength(0.9).iterations(4))
       .force('pointer', (alpha) => {
         if (!fidgetRef.current) return;
         const p = pointerRef.current;
@@ -284,8 +293,11 @@ export default function Bubbles({ year, metric, cursorFidget, playing }) {
       if (playingRef.current) {
         sim.alphaTarget(0.06).restart(); // stay warm so positions re-settle
       } else {
+        // Never cut an in-progress settle: the very first apply runs while the
+        // freshly-created sim is still hot (alpha ~1), which is what untangles
+        // the seeded cluster. A later manual scrub bumps a gentle re-settle.
         sim.alphaTarget(0);
-        sim.alpha(0.3).restart();
+        sim.alpha(Math.max(sim.alpha(), 0.4)).restart();
       }
     };
     applyRef.current = applyMetricYear;
