@@ -217,3 +217,18 @@ html, body, #root {
   color: var(--muted);
 }
 .footer strong { color: var(--pink); }
+
+/* ---- Mobile ---- */
+@media (max-width: 600px) {
+  .app { padding: 16px 12px 28px; }
+  .header h1 { font-size: 30px; }
+  .tagline { font-size: 13px; margin-bottom: 18px; }
+  .controls { gap: 14px; padding: 12px 14px; }
+  .control-group label { font-size: 10px; }
+  .year-group { min-width: 100%; }
+  .movers { gap: 8px 12px; padding: 8px 12px; font-size: 12px; }
+  .bubbles-wrap { height: 60vh; min-height: 400px; }
+  .legend { gap: 10px 14px; padding: 10px 14px; font-size: 12px; }
+  .tooltip { left: 8px; top: 8px; padding: 9px 12px; }
+  .footer { font-size: 11px; }
+}

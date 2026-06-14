@@ -6,7 +6,7 @@ const PAD = 6;
 const MIN_R = 8;
 const MAX_R = 94;
 const SAMPLES = 32;   // outline resolution per bubble
-const FILL = 0.42;    // target fraction of canvas area filled by bubbles
+const FILL = 0.55;    // total bubble area ~ FILL * shortSide^2 (cluster fits the short side)
 const Y0 = YEARS[0];
 const Y1 = YEARS[YEARS.length - 1];
 
@@ -115,8 +115,12 @@ export default function Bubbles({ year, metric, cursorFidget, playing }) {
       const { w: cw, h: ch } = dimsRef.current;
       let baseArea = 0;
       for (const n of nodes) baseArea += Math.PI * n.r0 * n.r0;
+      // Scale by the SHORT side: a roundish cluster is limited by the smaller
+      // canvas dimension, so this keeps it from overflowing on wide-short or
+      // tall-narrow canvases alike.
+      const short = Math.min(cw, ch);
       const k = baseArea > 0
-        ? Math.max(0.35, Math.min(1.6, Math.sqrt((FILL * cw * ch) / baseArea)))
+        ? Math.max(0.35, Math.min(1.6, Math.sqrt((FILL * short * short) / baseArea)))
         : 1;
       for (const n of nodes) n.r = n.r0 * k;
     };
