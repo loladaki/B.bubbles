@@ -1,21 +1,21 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { COUNTRIES, YEARS, interpolate } from './data/countries.js';
 
 const PAD = 6;
 const MIN_R = 8;
 const MAX_R = 94;
-const SAMPLES = 40; // outline resolution per bubble
-const INSET = 2.5;  // subtle uniform gap (thin soap-foam membrane) between bubbles
+const SAMPLES = 32;   // outline resolution per bubble
+const FILL = 0.42;    // target fraction of canvas area filled by bubbles
+const Y0 = YEARS[0];
+const Y1 = YEARS[YEARS.length - 1];
 
 const closedCurve = d3.line().curve(d3.curveCatmullRomClosed.alpha(0.6));
 
-// Build a soap-bubble outline: a circle flattened against nearby neighbours
-// using the radical (power-diagram) plane, so bubbles share a soft flat edge
-// where they touch and stay round where they're free. Everything is pulled in
-// by INSET so neighbours never quite meet, leaving a thin even gap.
-function bubbleOutline(node, neighbours) {
-  const rd = node.r - INSET;
+// Soap-bubble outline: a circle flattened against nearby neighbours using the
+// radical (power-diagram) plane, pulled in by `inset` to leave a thin membrane.
+function bubbleOutline(node, neighbours, inset) {
+  const rd = node.r - inset;
   const pts = new Array(SAMPLES);
   for (let a = 0; a < SAMPLES; a++) {
     const th = (a / SAMPLES) * Math.PI * 2;
@@ -28,8 +28,7 @@ function bubbleOutline(node, neighbours) {
       const D = Math.sqrt(dx * dx + dy * dy) || 1e-6;
       const nx = dx / D;
       const ny = dy / D;
-      // Shared contact plane, pulled back by INSET to leave a membrane gap.
-      const t = (D * D + node.r * node.r - nb.r * nb.r) / (2 * D) - INSET;
+      const t = (D * D + node.r * node.r - nb.r * nb.r) / (2 * D) - inset;
       const proj = (px - node.x) * nx + (py - node.y) * ny;
       if (proj > t) {
         px -= (proj - t) * nx;
@@ -41,35 +40,46 @@ function bubbleOutline(node, neighbours) {
   return closedCurve(pts);
 }
 
-export default function Bubbles({ year, metric, cursorFidget }) {
+function makeRScale(metric) {
+  let max = 0;
+  for (const c of COUNTRIES) for (const v of c[metric]) if (v > max) max = v;
+  return d3.scaleSqrt().domain([0, max]).range([MIN_R, MAX_R]);
+}
+
+export default function Bubbles({ year, metric, cursorFidget, playing }) {
   const wrapRef = useRef(null);
   const svgRef = useRef(null);
   const simRef = useRef(null);
+  const nodesRef = useRef(null);
   const pointerRef = useRef({ x: null, y: null, active: false });
   const dimsRef = useRef({ w: 1200, h: 600 });
   const hoveredCodeRef = useRef(null);
   const fidgetRef = useRef(cursorFidget);
+  const playingRef = useRef(playing);
+  const applyRef = useRef(null);    // applyMetricYear(year, metric)
+  const relayoutRef = useRef(null); // recompute radii for current canvas
   fidgetRef.current = cursorFidget;
+  playingRef.current = playing;
+
   const [viewBox, setViewBox] = useState('0 0 1200 600');
   const [hovered, setHovered] = useState(null);
 
-  // Measure the wrapper and keep the SVG coordinate space equal to its real
-  // pixel size, so bubbles can travel the full width edge to edge.
+  // Keep the SVG coordinate space equal to the wrapper's real pixel size.
   useLayoutEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
     const update = () => {
       const w = Math.round(el.clientWidth);
       const h = Math.round(el.clientHeight);
-      if (w < 100 || h < 100) return; // ignore pre-layout zero sizes
+      if (w < 100 || h < 100) return;
       const cur = dimsRef.current;
       if (cur.w === w && cur.h === h) return;
       dimsRef.current = { w, h };
       setViewBox(`0 0 ${w} ${h}`);
+      if (relayoutRef.current) relayoutRef.current();
       if (simRef.current) simRef.current.alpha(0.3).restart();
     };
     update();
-    // Catch late layout over the next few frames.
     const r1 = requestAnimationFrame(update);
     const r2 = requestAnimationFrame(() => requestAnimationFrame(update));
     const ro = new ResizeObserver(update);
@@ -83,98 +93,73 @@ export default function Bubbles({ year, metric, cursorFidget }) {
     };
   }, []);
 
-  // Fixed scale across ALL years so sizes reflect absolute values over time:
-  // as births fall or populations grow, bubbles actually shrink/swell.
-  const rScale = useMemo(() => {
-    let max = 0;
-    for (const c of COUNTRIES) for (const v of c[metric]) if (v > max) max = v;
-    return d3.scaleSqrt().domain([0, max]).range([MIN_R, MAX_R]);
-  }, [metric]);
-
-  const nodes = useMemo(() => {
-    return COUNTRIES.map((c) => {
-      const value = interpolate(c[metric], year);
-      // Local trend: how fast this country is growing/shrinking right now.
-      const ahead = interpolate(c[metric], Math.min(YEARS[YEARS.length - 1], year + 3));
-      const behind = interpolate(c[metric], Math.max(YEARS[0], year - 3));
-      const trend = value > 0 ? (ahead - behind) / value : 0; // fractional change / ~6yr
-      return { ...c, value, r: rScale(value), trend };
-    });
-  }, [year, metric, rScale]);
-
+  // One-time setup: persistent nodes, simulation, joins, handlers, render loop.
   useEffect(() => {
     const svg = d3.select(svgRef.current);
+    const { w, h } = dimsRef.current;
 
-    const existing = simRef.current ? simRef.current.nodes() : [];
-    const merged = nodes.map((n) => {
-      const prev = existing.find((e) => e.code === n.code);
-      if (prev) return { ...prev, ...n };
-      const { w, h } = dimsRef.current;
-      return {
-        ...n,
-        x: w / 2 + (Math.random() - 0.5) * Math.min(w * 0.6, 400),
-        y: h / 2 + (Math.random() - 0.5) * Math.min(h * 0.6, 280),
-      };
-    });
+    // Persistent node objects (positions survive year/metric changes).
+    const nodes = COUNTRIES.map((c) => ({
+      ...c,
+      x: w / 2 + (Math.random() - 0.5) * Math.min(w * 0.6, 400),
+      y: h / 2 + (Math.random() - 0.5) * Math.min(h * 0.6, 280),
+      value: 0, r0: MIN_R, r: MIN_R, trend: 0,
+    }));
+    nodesRef.current = nodes;
 
-    if (!simRef.current) {
-      simRef.current = d3.forceSimulation(merged)
-        // Gentle, balanced pull so bubbles form a centered 2D cluster that
-        // uses both width and height (not a flat line).
-        .force('x', d3.forceX(() => dimsRef.current.w / 2).strength(0.03))
-        .force('y', d3.forceY(() => dimsRef.current.h / 2).strength(0.05))
-        // Slight overlap -> visible flattening at contacts.
-        .force('collide', d3.forceCollide()
-          .radius((d) => d.r - 5)
-          .strength(0.85)
-          .iterations(4))
-        .force('pointer', (alpha) => {
-          if (!fidgetRef.current) return;
-          const p = pointerRef.current;
-          if (!p.active || p.x == null) return;
-          const ns = simRef.current.nodes();
-          for (const n of ns) {
-            const dx = n.x - p.x;
-            const dy = n.y - p.y;
-            const dist = Math.sqrt(dx * dx + dy * dy) || 0.0001;
-            const reach = 100 + n.r;
-            if (dist < reach) {
-              const push = (1 - dist / reach) * 6 * alpha * 30;
-              n.vx += (dx / dist) * push;
-              n.vy += (dy / dist) * push;
-            }
+    const scaleCache = {};
+    const getScale = (m) => (scaleCache[m] ||= makeRScale(m));
+
+    // Recompute display radii so total bubble area targets FILL of the canvas.
+    const relayout = () => {
+      const { w: cw, h: ch } = dimsRef.current;
+      let baseArea = 0;
+      for (const n of nodes) baseArea += Math.PI * n.r0 * n.r0;
+      const k = baseArea > 0
+        ? Math.max(0.35, Math.min(1.6, Math.sqrt((FILL * cw * ch) / baseArea)))
+        : 1;
+      for (const n of nodes) n.r = n.r0 * k;
+    };
+    relayoutRef.current = relayout;
+
+    const sim = d3.forceSimulation(nodes)
+      .force('x', d3.forceX(() => dimsRef.current.w / 2).strength(0.03))
+      .force('y', d3.forceY(() => dimsRef.current.h / 2).strength(0.05))
+      .force('collide', d3.forceCollide().radius((d) => d.r * 0.93).strength(0.85).iterations(3))
+      .force('pointer', (alpha) => {
+        if (!fidgetRef.current) return;
+        const p = pointerRef.current;
+        if (!p.active || p.x == null) return;
+        for (const n of nodes) {
+          const dx = n.x - p.x;
+          const dy = n.y - p.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 0.0001;
+          const reach = 100 + n.r;
+          if (dist < reach) {
+            const push = (1 - dist / reach) * 6 * alpha * 30;
+            n.vx += (dx / dist) * push;
+            n.vy += (dy / dist) * push;
           }
-        })
-        .force('bound', () => {
-          const ns = simRef.current.nodes();
-          const { w, h } = dimsRef.current;
-          for (const n of ns) {
-            const minX = PAD + n.r, maxX = w - PAD - n.r;
-            const minY = PAD + n.r, maxY = h - PAD - n.r;
-            if (n.x < minX) { n.x = minX; n.vx *= -0.4; }
-            if (n.x > maxX) { n.x = maxX; n.vx *= -0.4; }
-            if (n.y < minY) { n.y = minY; n.vy *= -0.4; }
-            if (n.y > maxY) { n.y = maxY; n.vy *= -0.4; }
-          }
-        })
-        .alphaDecay(0.015)
-        .velocityDecay(0.22)
-        .alphaMin(0.001);
-      // No permanent heat — let the cluster settle at rest, then re-heat only
-      // on interaction (drag / fidget-hover). Calmer, and lets bubbles come
-      // to a satisfying rest.
-    } else {
-      simRef.current.nodes(merged);
-      simRef.current.force('collide').radius((d) => d.r - 5);
-      simRef.current.alpha(0.5).restart();
-    }
+        }
+      })
+      .force('bound', () => {
+        const { w: cw, h: ch } = dimsRef.current;
+        for (const n of nodes) {
+          const minX = PAD + n.r, maxX = cw - PAD - n.r;
+          const minY = PAD + n.r, maxY = ch - PAD - n.r;
+          if (n.x < minX) { n.x = minX; n.vx *= -0.4; }
+          if (n.x > maxX) { n.x = maxX; n.vx *= -0.4; }
+          if (n.y < minY) { n.y = minY; n.vy *= -0.4; }
+          if (n.y > maxY) { n.y = maxY; n.vy *= -0.4; }
+        }
+      })
+      .alphaDecay(0.015)
+      .velocityDecay(0.22)
+      .alphaMin(0.001);
+    simRef.current = sim;
 
-    const sim = simRef.current;
-
-    // One flexible flag-filled bubble per country.
-    const bubblesG = svg.select('g.bubbles');
-    const bJoin = bubblesG.selectAll('path.bubble')
-      .data(merged, (d) => d.code)
+    const bJoin = svg.select('g.bubbles').selectAll('path.bubble')
+      .data(nodes, (d) => d.code)
       .join((enter) =>
         enter.append('path')
           .attr('class', 'bubble')
@@ -182,28 +167,8 @@ export default function Bubbles({ year, metric, cursorFidget }) {
           .attr('fill', (d) => (d.isRest ? 'url(#rest-fill)' : `url(#flag-${d.code})`))
       );
 
-    // Trend ring: subtle green = growing, red = shrinking. Stable countries
-    // keep only a faint white edge; the colour barely whispers the direction.
-    bJoin
-      .attr('stroke', (d) => {
-        if (Math.abs(d.trend) < 0.03) return 'rgba(255,255,255,0.16)';
-        return d.trend >= 0 ? '#3df08a' : '#ff4d6d';
-      })
-      .attr('stroke-opacity', (d) => {
-        const a = Math.abs(d.trend);
-        if (a < 0.03) return 0.16;
-        return Math.min(0.45, 0.12 + a * 1.6);
-      })
-      .attr('stroke-width', (d) => 0.8 + Math.min(1.4, Math.abs(d.trend) * 7));
-
-    bJoin
-      .on('mouseenter', (_, d) => { setHovered(d); hoveredCodeRef.current = d.code; render(); })
-      .on('mouseleave', () => { setHovered(null); hoveredCodeRef.current = null; render(); });
-
-    // Soft sheen highlights (separate layer, on top).
-    const sheenG = svg.select('g.sheen');
-    const sJoin = sheenG.selectAll('ellipse.sheen')
-      .data(merged, (d) => d.code)
+    const sJoin = svg.select('g.sheen').selectAll('ellipse.sheen')
+      .data(nodes, (d) => d.code)
       .join((enter) =>
         enter.append('ellipse')
           .attr('class', 'sheen')
@@ -211,10 +176,8 @@ export default function Bubbles({ year, metric, cursorFidget }) {
           .attr('pointer-events', 'none')
       );
 
-    // Labels on top, crisp.
-    const labelsG = svg.select('g.labels');
-    const lJoin = labelsG.selectAll('text.code-label')
-      .data(merged, (d) => d.code)
+    const lJoin = svg.select('g.labels').selectAll('text.code-label')
+      .data(nodes, (d) => d.code)
       .join((enter) =>
         enter.append('text')
           .attr('class', 'code-label')
@@ -229,72 +192,129 @@ export default function Bubbles({ year, metric, cursorFidget }) {
           .attr('stroke-width', 3.5)
           .attr('stroke-linejoin', 'round')
       );
-    // Font size only here; the text itself is shown on hover (see render()).
-    lJoin.attr('font-size', (d) => Math.max(11, Math.min(20, d.r / 2.4)));
+
+    bJoin
+      .on('mouseenter', (_, d) => { setHovered(d); hoveredCodeRef.current = d.code; render(); })
+      .on('mouseleave', () => { setHovered(null); hoveredCodeRef.current = null; render(); });
 
     const drag = d3.drag()
       .on('start', (event, d) => {
         sim.alphaTarget(0.3).restart();
-        d.fx = d.x; d.fy = d.y;
-        d._lastvx = 0; d._lastvy = 0;
+        d.fx = d.x; d.fy = d.y; d._lastvx = 0; d._lastvy = 0;
       })
       .on('drag', (event, d) => {
-        d.fx = event.x; d.fy = event.y;
-        d._lastvx = event.dx;
-        d._lastvy = event.dy;
+        d.fx = event.x; d.fy = event.y; d._lastvx = event.dx; d._lastvy = event.dy;
       })
       .on('end', (event, d) => {
         d.fx = null; d.fy = null;
-        d.vx = (d._lastvx || 0) * 3;
-        d.vy = (d._lastvy || 0) * 3;
-        sim.alphaTarget(0);     // let it settle back to rest
+        d.vx = (d._lastvx || 0) * 3; d.vy = (d._lastvy || 0) * 3;
+        sim.alphaTarget(playingRef.current ? 0.06 : 0);
         sim.alpha(0.5).restart();
       });
     bJoin.call(drag);
 
+    // Per-frame render: Voronoi-ish neighbour deformation via a quadtree.
     const render = () => {
-      // Precompute neighbour lists (only nearby bubbles can deform a bubble).
-      for (let i = 0; i < merged.length; i++) {
-        const a = merged[i];
+      let maxR = 0;
+      for (const n of nodes) if (n.r > maxR) maxR = n.r;
+      const tree = d3.quadtree().x((d) => d.x).y((d) => d.y).addAll(nodes);
+
+      bJoin.attr('d', (a) => {
+        const searchR = a.r + maxR;
         const nbs = [];
-        for (let j = 0; j < merged.length; j++) {
-          if (i === j) continue;
-          const b = merged[j];
-          const dx = b.x - a.x, dy = b.y - a.y;
-          if (dx * dx + dy * dy < (a.r + b.r) ** 2) nbs.push(b);
-        }
-        a._nbs = nbs;
-      }
-      bJoin.attr('d', (d) => bubbleOutline(d, d._nbs));
+        tree.visit((quad, x0, y0, x1, y1) => {
+          if (!quad.length) {
+            let q = quad;
+            do {
+              const b = q.data;
+              if (b && b !== a) {
+                const dx = b.x - a.x, dy = b.y - a.y;
+                if (dx * dx + dy * dy < (a.r + b.r) ** 2) nbs.push(b);
+              }
+            } while ((q = q.next));
+          }
+          return x0 > a.x + searchR || x1 < a.x - searchR || y0 > a.y + searchR || y1 < a.y - searchR;
+        });
+        const inset = Math.max(1, Math.min(3, a.r * 0.06));
+        return bubbleOutline(a, nbs, inset);
+      });
+
       sJoin
         .attr('cx', (d) => d.x - d.r * 0.3)
         .attr('cy', (d) => d.y - d.r * 0.4)
         .attr('rx', (d) => d.r * 0.3)
         .attr('ry', (d) => d.r * 0.18)
         .attr('transform', (d) => `rotate(-28 ${d.x - d.r * 0.3} ${d.y - d.r * 0.4})`);
-      // Rest-of-world always shows a globe; others show their code on hover.
+
       lJoin
         .attr('x', (d) => d.x)
         .attr('y', (d) => d.y)
+        .attr('font-size', (d) => Math.max(10, Math.min(20, d.r / 2.4)))
         .text((d) => (d.isRest ? '🌍' : d.code === hoveredCodeRef.current ? d.code : ''));
     };
     sim.on('tick', render);
-    render();
+
+    // Apply a given year/metric: update values, radii, trend rings.
+    const applyMetricYear = (yr, m) => {
+      const scale = getScale(m);
+      for (const n of nodes) {
+        const value = interpolate(n[m], yr);
+        const ahead = interpolate(n[m], Math.min(Y1, yr + 3));
+        const behind = interpolate(n[m], Math.max(Y0, yr - 3));
+        n.value = value;
+        n.r0 = scale(value);
+        n.trend = value > 0 ? (ahead - behind) / value : 0;
+      }
+      relayout();
+      bJoin
+        .attr('stroke', (d) => {
+          if (Math.abs(d.trend) < 0.03) return 'rgba(255,255,255,0.16)';
+          return d.trend >= 0 ? '#3df08a' : '#ff4d6d';
+        })
+        .attr('stroke-opacity', (d) => {
+          const a = Math.abs(d.trend);
+          return a < 0.03 ? 0.16 : Math.min(0.45, 0.12 + a * 1.6);
+        })
+        .attr('stroke-width', (d) => 0.8 + Math.min(1.4, Math.abs(d.trend) * 7));
+      render(); // resize immediately, regardless of the sim's tick cadence
+      if (playingRef.current) {
+        sim.alphaTarget(0.06).restart(); // stay warm so positions re-settle
+      } else {
+        sim.alphaTarget(0);
+        sim.alpha(0.3).restart();
+      }
+    };
+    applyRef.current = applyMetricYear;
+
+    applyMetricYear(year, metric);
 
     svg
       .on('pointermove', (event) => {
         const [x, y] = d3.pointer(event, svgRef.current);
         pointerRef.current = { x, y, active: true };
-        // Keep the sim warm while fidget is on so hovering pushes bubbles.
-        if (fidgetRef.current && sim.alpha() < 0.08) {
-          sim.alphaTarget(0.12).restart();
-        }
+        if (fidgetRef.current && sim.alpha() < 0.08) sim.alphaTarget(0.12).restart();
       })
       .on('pointerleave', () => {
         pointerRef.current.active = false;
-        sim.alphaTarget(0); // settle once the pointer leaves
+        if (!playingRef.current) sim.alphaTarget(0);
       });
-  }, [nodes, metric]);
+
+    return () => { sim.stop(); sim.on('tick', null); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Year / metric changes: cheap value+size update, no re-join.
+  useEffect(() => {
+    if (applyRef.current) applyRef.current(year, metric);
+  }, [year, metric]);
+
+  // Keep the sim gently warm while playing so the cluster tracks size changes.
+  useEffect(() => {
+    const sim = simRef.current;
+    if (!sim) return;
+    if (playing) sim.alphaTarget(0.06).restart();
+    else sim.alphaTarget(0);
+  }, [playing]);
 
   return (
     <div className="bubbles-wrap" ref={wrapRef}>
@@ -314,7 +334,6 @@ export default function Bubbles({ year, metric, cursorFidget }) {
               />
             </pattern>
           ))}
-          {/* "Rest of the World" bubble — a muted globe, not a flag. */}
           <radialGradient id="rest-fill" cx="0.36" cy="0.3" r="0.95">
             <stop offset="0%" stopColor="#46598a" />
             <stop offset="100%" stopColor="#1b2440" />

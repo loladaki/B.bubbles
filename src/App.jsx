@@ -1,14 +1,39 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Bubbles from './Bubbles.jsx';
 import { CONTINENTS, COUNTRIES, YEARS, interpolate } from './data/countries.js';
 import './App.css';
 
+const START_YEAR = YEARS[0];
 const END_YEAR = YEARS[YEARS.length - 1];
+const PLAY_SPEED = 9; // years per second
 
 export default function App() {
   const [year, setYear] = useState(2025);
   const [metric, setMetric] = useState('births');
   const [cursorFidget, setCursorFidget] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const dirRef = useRef(1); // ping-pong direction
+
+  // Auto-advance the year while playing (ping-pong between 1990 and 2050).
+  // setInterval (not rAF) so it keeps running even when the tab can't paint.
+  useEffect(() => {
+    if (!playing) return;
+    let last = performance.now();
+    const id = setInterval(() => {
+      const now = performance.now();
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      setYear((y) => {
+        let ny = y + dirRef.current * PLAY_SPEED * dt;
+        if (ny >= END_YEAR) { ny = END_YEAR; dirRef.current = -1; }
+        else if (ny <= START_YEAR) { ny = START_YEAR; dirRef.current = 1; }
+        return ny;
+      });
+    }, 33);
+    return () => clearInterval(id);
+  }, [playing]);
+
+  const displayYear = Math.round(year);
 
   const totals = COUNTRIES.reduce((acc, c) => {
     const v = interpolate(c[metric], year);
@@ -35,8 +60,8 @@ export default function App() {
       <header className="header">
         <h1><span className="dot">●</span> B.bubbles</h1>
         <p className="tagline">
-          The world's {metric === 'births' ? 'births' : 'population'} in <strong>{year}</strong>, as soap-bubble countries.
-          Drag them, throw them, and scrub through time to {END_YEAR}.
+          The world's {metric === 'births' ? 'births' : 'population'} in <strong>{displayYear}</strong>, as soap-bubble countries.
+          Drag them, throw them, and press play to watch {START_YEAR}→{END_YEAR}.
         </p>
       </header>
 
@@ -58,11 +83,21 @@ export default function App() {
         </div>
 
         <div className="control-group year-group">
-          <label>Year <strong>{year}</strong></label>
-          <input
-            type="range" min={YEARS[0]} max={END_YEAR} step={1}
-            value={year} onChange={(e) => setYear(+e.target.value)}
-          />
+          <label>Year <strong>{displayYear}</strong></label>
+          <div className="year-row">
+            <button
+              className="play-btn"
+              onClick={() => setPlaying((p) => !p)}
+              aria-label={playing ? 'Pause' : 'Play'}
+            >
+              {playing ? '❚❚' : '▶'}
+            </button>
+            <input
+              type="range" min={START_YEAR} max={END_YEAR} step={0.5}
+              value={year}
+              onChange={(e) => { setPlaying(false); setYear(+e.target.value); }}
+            />
+          </div>
           <div className="year-ticks">
             <span>1990</span><span>2005</span><span>2020</span><span>2035</span><span>2050</span>
           </div>
@@ -95,6 +130,7 @@ export default function App() {
         year={year}
         metric={metric}
         cursorFidget={cursorFidget}
+        playing={playing}
       />
 
       <div className="legend">
