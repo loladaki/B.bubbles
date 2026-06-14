@@ -179,7 +179,7 @@ export default function Bubbles({ year, metric, cursorFidget }) {
         enter.append('path')
           .attr('class', 'bubble')
           .style('cursor', 'grab')
-          .attr('fill', (d) => `url(#flag-${d.code})`)
+          .attr('fill', (d) => (d.isRest ? 'url(#rest-fill)' : `url(#flag-${d.code})`))
       );
 
     // Trend ring: subtle green = growing, red = shrinking. Stable countries
@@ -272,11 +272,11 @@ export default function Bubbles({ year, metric, cursorFidget }) {
         .attr('rx', (d) => d.r * 0.3)
         .attr('ry', (d) => d.r * 0.18)
         .attr('transform', (d) => `rotate(-28 ${d.x - d.r * 0.3} ${d.y - d.r * 0.4})`);
-      // Country code shows only for the hovered bubble.
+      // Rest-of-world always shows a globe; others show their code on hover.
       lJoin
         .attr('x', (d) => d.x)
         .attr('y', (d) => d.y)
-        .text((d) => (d.code === hoveredCodeRef.current ? d.code : ''));
+        .text((d) => (d.isRest ? '🌍' : d.code === hoveredCodeRef.current ? d.code : ''));
     };
     sim.on('tick', render);
     render();
@@ -300,7 +300,7 @@ export default function Bubbles({ year, metric, cursorFidget }) {
     <div className="bubbles-wrap" ref={wrapRef}>
       <svg ref={svgRef} viewBox={viewBox} preserveAspectRatio="xMidYMid meet">
         <defs>
-          {COUNTRIES.map((c) => (
+          {COUNTRIES.filter((c) => c.iso2).map((c) => (
             <pattern
               key={c.code}
               id={`flag-${c.code}`}
@@ -314,6 +314,11 @@ export default function Bubbles({ year, metric, cursorFidget }) {
               />
             </pattern>
           ))}
+          {/* "Rest of the World" bubble — a muted globe, not a flag. */}
+          <radialGradient id="rest-fill" cx="0.36" cy="0.3" r="0.95">
+            <stop offset="0%" stopColor="#46598a" />
+            <stop offset="100%" stopColor="#1b2440" />
+          </radialGradient>
         </defs>
 
         <g className="bubbles" />
@@ -326,7 +331,11 @@ export default function Bubbles({ year, metric, cursorFidget }) {
           <div className="tt-flag">{hovered.flag}</div>
           <div>
             <div className="tt-name">{hovered.name}</div>
-            <div className="tt-meta">{hovered.continent}</div>
+            <div className="tt-meta">
+              {hovered.isRest
+                ? `${hovered.count} smaller countries & territories`
+                : hovered.continent}
+            </div>
             <div className="tt-value">
               {formatValue(hovered.value, metric)}{' '}
               <span className="tt-unit">{metric === 'births' ? 'births/yr' : 'people'}</span>
@@ -334,6 +343,12 @@ export default function Bubbles({ year, metric, cursorFidget }) {
             <div className="tt-trend" style={{ color: hovered.trend >= 0 ? '#3df08a' : '#ff4d6d' }}>
               {hovered.trend >= 0 ? '▲ growing' : '▼ shrinking'}
             </div>
+            {hovered.isRest && (
+              <div className="tt-note">
+                Everyone not in the top 120 — combined so the bubbles add up to
+                the full UN world total.
+              </div>
+            )}
           </div>
         </div>
       )}

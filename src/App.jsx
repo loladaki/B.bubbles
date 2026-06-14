@@ -17,9 +17,10 @@ export default function App() {
     return acc;
   }, { world: 0, byContinent: {} });
 
-  // Biggest absolute movers from the selected year to 2050.
+  // Biggest absolute movers from the selected year to 2050 (excluding the
+  // aggregate "Rest of the World" bubble).
   const movers = useMemo(() => {
-    const rows = COUNTRIES.map((c) => {
+    const rows = COUNTRIES.filter((c) => !c.isRest).map((c) => {
       const now = interpolate(c[metric], year);
       const fut = interpolate(c[metric], END_YEAR);
       return { code: c.code, flag: c.flag, name: c.name, delta: fut - now };
@@ -120,7 +121,10 @@ export default function App() {
             : `${totals.world.toFixed(1)}M`}
         </strong>
         {' · '}
-        <span>120 countries · Source: UN World Population Prospects 2024 (medium variant)</span>
+        <span>
+          Top 120 countries + 🌍 Rest of the World (≈100% of people) ·
+          Source: UN World Population Prospects 2024 (medium variant)
+        </span>
       </footer>
     </div>
   );
